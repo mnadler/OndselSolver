@@ -36,6 +36,7 @@ namespace MbD {
 		FColDsptr aTX();
 		void constraintsReport() override;
 		void fillRedundantConstraints(std::shared_ptr<std::vector<std::shared_ptr<Constraint>>> redunConstraints) override;
+		void inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos) override;
 		FColDsptr jointForceI();
 		FColDsptr jointTorqueI();
 		void reactivateRedundantConstraints() override;

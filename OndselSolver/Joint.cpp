@@ -103,6 +103,24 @@ void Joint::constraintsReport()
 	}
 }
 
+void Joint::inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos)
+{
+	auto inconsistentCons = std::make_shared<std::vector<std::shared_ptr<Constraint>>>();
+	constraintsDo([&](std::shared_ptr<Constraint> con) {
+		if (std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), con->iG) != inconsistentEqnNos->end()) {
+			inconsistentCons->push_back(con);
+		}
+		});
+	if (inconsistentCons->size() > 0) {
+		std::string str = "MbD: " + this->classname() + std::string(" ") + this->name + " has the following inconsistent constraint(s): ";
+		this->logString(str);
+		std::for_each(inconsistentCons->begin(), inconsistentCons->end(), [&](auto& con) {
+			str = "MbD: " + std::string("    ") + con->constraintSpec();
+			this->logString(str);
+			});
+	}
+}
+
 std::shared_ptr<StateData> Joint::stateData()
 {
 	//"

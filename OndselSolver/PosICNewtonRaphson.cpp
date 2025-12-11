@@ -11,6 +11,7 @@
 
 #include "PosICNewtonRaphson.h"
 #include "SingularMatrixError.h"
+#include "InconsistentConstraintsError.h"
 #include "SystemSolver.h"
 #include "Part.h"
 #include "Constraint.h"
@@ -31,6 +32,15 @@ void PosICNewtonRaphson::run()
 			iterate();
 			postRun();
 			break;
+		}
+		catch (const InconsistentConstraintsError& ex) {
+			auto inconsistentEqnNos = ex.getInconsistentEqnNos();
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->reactivateRedundantConstraints(); });
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->setqsu(qsuOld); });
+			std::string str("MbD: Constraints are geometrically inconsistent. No solution exists.");
+			system->logString(str);
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->inconsistentConstraintsReport(inconsistentEqnNos); });
+			throw;
 		}
 		catch (const SingularMatrixError& ex) {
 			auto redundantEqnNos = ex.getRedundantEqnNos();

@@ -8,10 +8,12 @@
  
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 
 #include "GESpMatFullPvPosIC.h"
 #include "SingularMatrixError.h"
+#include "InconsistentConstraintsError.h"
 #include "PosICNewtonRaphson.h"
 
 using namespace MbD;
@@ -79,8 +81,28 @@ void GESpMatFullPvPosIC::doPivoting(size_t p)
 		if (itr == pivotRowLimits->end()) {
 			auto begin = rowOrder->begin() + p;
 			auto end = rowOrder->begin() + pivotRowLimit;
-			auto redundantEqnNos = std::make_shared<FullColumn<size_t>>(begin, end);
-			throwSingularMatrixError("", redundantEqnNos);
+			auto eqnNos = std::make_shared<FullColumn<size_t>>(begin, end);
+
+			// Check if the RHS entries for dependent rows are near-zero.
+			// If not, the constraints are inconsistent (no solution exists),
+			// not merely redundant (infinite solutions exist).
+			// This implements the augmented matrix rank test: rank(A) < rank([A|b])
+			// means inconsistent, while rank(A) = rank([A|b]) means redundant.
+			bool isInconsistent = false;
+			double consistencyTolerance = 1.0e-6;
+			for (size_t i = p; i < pivotRowLimit; i++) {
+				if (std::abs(rightHandSideB->at(rowOrder->at(i))) > consistencyTolerance) {
+					isInconsistent = true;
+					break;
+				}
+			}
+
+			if (isInconsistent) {
+				throw InconsistentConstraintsError(
+					"Constraints are geometrically inconsistent (no solution exists)", eqnNos);
+			}
+
+			throwSingularMatrixError("", eqnNos);
 		}
 		else {
 			pivotRowLimit = *itr;

@@ -536,6 +536,10 @@ void Item::constraintsReport()
 {
 }
 
+void Item::inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>>)
+{
+}
+
 void Item::setqsu(FColDsptr)
 {
 }

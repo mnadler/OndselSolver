@@ -48,6 +48,7 @@ namespace MbD {
 		virtual void fillCollisionpFpydot(SpMatDsptr mat);
 		virtual void fillConstraints(std::shared_ptr<std::vector<std::shared_ptr<Constraint>>> allConstraints);
 		virtual void fillDispConstraints(std::shared_ptr<std::vector<std::shared_ptr<Constraint>>> dispConstraints);
+		virtual void inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos);
 		virtual void fillDynError(FColDsptr col);
 		virtual void fillEssenConstraints(std::shared_ptr<std::vector<std::shared_ptr<Constraint>>> essenConstraints);
 		virtual void fillPerpenConstraints(std::shared_ptr<std::vector<std::shared_ptr<Constraint>>> perpenConstraints);
