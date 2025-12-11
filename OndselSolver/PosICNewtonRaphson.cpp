@@ -8,6 +8,10 @@
 
 #include <assert.h>
 #include <exception>
+#include <map>
+#include <sstream>
+#include <iomanip>
+#include <cmath>
 
 #include "PosICNewtonRaphson.h"
 #include "SingularMatrixError.h"
@@ -18,6 +22,7 @@
 #include "CREATE.h"
 #include "GESpMatParPvPrecise.h"
 #include "GESpMatFullPvPosIC.h"
+#include "Joint.h"
 
 using namespace MbD;
 
@@ -33,14 +38,81 @@ void PosICNewtonRaphson::run()
 			postRun();
 			break;
 		}
-		catch (const InconsistentConstraintsError& ex) {
+		catch (InconsistentConstraintsError& ex) {
 			auto inconsistentEqnNos = ex.getInconsistentEqnNos();
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->reactivateRedundantConstraints(); });
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->setqsu(qsuOld); });
-			std::string str("MbD: Constraints are geometrically inconsistent. No solution exists.");
-			system->logString(str);
-			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->inconsistentConstraintsReport(inconsistentEqnNos); });
-			throw;
+
+			// Build diagnostic information
+			auto diagnostic = std::make_shared<InconsistencyDiagnostic>();
+			std::map<std::string, int> partOccurrences;
+
+			// Collect joint diagnostics
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+				auto joint = std::dynamic_pointer_cast<Joint>(item);
+				if (joint) {
+					auto jointDiag = joint->getJointDiagnostic(inconsistentEqnNos);
+					if (!jointDiag.inconsistentConstraints.empty()) {
+						diagnostic->joints.push_back(jointDiag);
+						if (!jointDiag.partIName.empty()) partOccurrences[jointDiag.partIName]++;
+						if (!jointDiag.partJName.empty()) partOccurrences[jointDiag.partJName]++;
+					}
+				}
+			});
+
+			// Identify affected part (appears most frequently)
+			int maxCount = 0;
+			for (const auto& pair : partOccurrences) {
+				if (pair.second > maxCount) {
+					maxCount = pair.second;
+					diagnostic->affectedPartName = pair.first;
+				}
+			}
+
+			// Compute total violation
+			for (const auto& jointDiag : diagnostic->joints) {
+				for (const auto& conDiag : jointDiag.inconsistentConstraints) {
+					diagnostic->totalViolation += std::abs(conDiag.violation);
+				}
+			}
+
+			// Build diagnostic YAML message
+			std::ostringstream oss;
+			oss << std::fixed << std::setprecision(6);
+			oss << "Constraints are geometrically inconsistent (no solution exists)\n";
+			oss << "INCONSISTENT_CONSTRAINTS:\n";
+			oss << "  affected_part: \"" << diagnostic->affectedPartName << "\"\n";
+			oss << "  total_violation: " << diagnostic->totalViolation << "\n";
+			oss << "  joints:\n";
+			for (const auto& jointDiag : diagnostic->joints) {
+				oss << "    - name: \"" << jointDiag.name << "\"\n";
+				oss << "      type: \"" << jointDiag.type << "\"\n";
+				oss << "      part_i: \"" << jointDiag.partIName << "\"\n";
+				oss << "      part_j: \"" << jointDiag.partJName << "\"\n";
+				oss << "      lcs_i:\n";
+				oss << "        name: \"" << jointDiag.lcsI.name << "\"\n";
+				oss << "        position_on_part: [" << jointDiag.lcsI.positionOnPart[0] << ", "
+					<< jointDiag.lcsI.positionOnPart[1] << ", " << jointDiag.lcsI.positionOnPart[2] << "]\n";
+				oss << "        world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
+					<< jointDiag.lcsI.worldPosition[1] << ", " << jointDiag.lcsI.worldPosition[2] << "]\n";
+				oss << "      lcs_j:\n";
+				oss << "        name: \"" << jointDiag.lcsJ.name << "\"\n";
+				oss << "        position_on_part: [" << jointDiag.lcsJ.positionOnPart[0] << ", "
+					<< jointDiag.lcsJ.positionOnPart[1] << ", " << jointDiag.lcsJ.positionOnPart[2] << "]\n";
+				oss << "        world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
+					<< jointDiag.lcsJ.worldPosition[1] << ", " << jointDiag.lcsJ.worldPosition[2] << "]\n";
+				oss << "      inconsistent_constraints:\n";
+				for (const auto& conDiag : jointDiag.inconsistentConstraints) {
+					oss << "        - type: \"" << conDiag.type << "\"\n";
+					oss << "          violation: " << conDiag.violation << "\n";
+				}
+			}
+
+			// Also log to system output
+			system->logString(oss.str());
+
+			// Re-throw with detailed message
+			throw InconsistentConstraintsError(oss.str());
 		}
 		catch (const SingularMatrixError& ex) {
 			auto redundantEqnNos = ex.getRedundantEqnNos();

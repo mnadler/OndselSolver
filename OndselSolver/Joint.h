@@ -13,6 +13,7 @@
 #include <functional>
 
 #include "ConstraintSet.h"
+#include "InconsistentConstraintsError.h"
 
 namespace MbD {
 	class Constraint;
@@ -37,6 +38,7 @@ namespace MbD {
 		void constraintsReport() override;
 		void fillRedundantConstraints(std::shared_ptr<std::vector<std::shared_ptr<Constraint>>> redunConstraints) override;
 		void inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos) override;
+		JointDiagnostic getJointDiagnostic(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos);
 		FColDsptr jointForceI();
 		FColDsptr jointTorqueI();
 		void reactivateRedundantConstraints() override;

@@ -200,6 +200,7 @@ set(ONDSELSOLVER_SRC
         GESpMatParPvMarkoFast.cpp
         GESpMatParPvPrecise.cpp
         ICKineIntegrator.cpp
+        InconsistentConstraintsError.cpp
         IndependentVariable.cpp
         InLineJoint.cpp
         InPlaneJoint.cpp
@@ -518,6 +519,7 @@ set(ONDSELSOLVER_HEADERS
         GESpMatParPvMarkoFast.h
         GESpMatParPvPrecise.h
         ICKineIntegrator.h
+        InconsistentConstraintsError.h
         IndependentVariable.h
         InLineJoint.h
         InPlaneJoint.h

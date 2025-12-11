@@ -19,6 +19,8 @@
 #include "MarkerFrame.h"
 #include "ForceTorqueData.h"
 #include "System.h"
+#include "PartFrame.h"
+#include "Part.h"
 
 using namespace MbD;
 
@@ -119,6 +121,48 @@ void Joint::inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>> i
 			this->logString(str);
 			});
 	}
+}
+
+JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos)
+{
+	JointDiagnostic diag;
+	diag.name = this->name;
+	diag.type = this->classname();
+
+	// Get part and LCS info from frmI
+	auto markerI = frmI->getMarkerFrame();
+	auto partFrameI = markerI->getPartFrame();
+	auto partI = partFrameI->getPart();
+	diag.partIName = partI ? partI->name : "";
+	diag.lcsI.name = markerI->name;
+	diag.lcsI.positionOnPart = { markerI->rpmp->at(0), markerI->rpmp->at(1), markerI->rpmp->at(2) };
+	diag.lcsI.worldPosition = { frmI->rOeO->at(0), frmI->rOeO->at(1), frmI->rOeO->at(2) };
+
+	// Get part and LCS info from frmJ
+	auto markerJ = frmJ->getMarkerFrame();
+	auto partFrameJ = markerJ->getPartFrame();
+	auto partJ = partFrameJ->getPart();
+	diag.partJName = partJ ? partJ->name : "";
+	diag.lcsJ.name = markerJ->name;
+	diag.lcsJ.positionOnPart = { markerJ->rpmp->at(0), markerJ->rpmp->at(1), markerJ->rpmp->at(2) };
+	diag.lcsJ.worldPosition = { frmJ->rOeO->at(0), frmJ->rOeO->at(1), frmJ->rOeO->at(2) };
+
+	// Get inconsistent constraints for this joint
+	// Only include constraints with significant violations (not near-zero)
+	const double violationTolerance = 1.0e-6;
+	constraintsDo([&](std::shared_ptr<Constraint> con) {
+		if (std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), con->iG) != inconsistentEqnNos->end()) {
+			if (std::abs(con->aG) > violationTolerance) {
+				ConstraintDiagnostic conDiag;
+				conDiag.equationNumber = con->iG;
+				conDiag.type = con->constraintSpec();
+				conDiag.violation = con->aG;
+				diag.inconsistentConstraints.push_back(conDiag);
+			}
+		}
+		});
+
+	return diag;
 }
 
 std::shared_ptr<StateData> Joint::stateData()

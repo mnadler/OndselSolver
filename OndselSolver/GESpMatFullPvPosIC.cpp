@@ -98,8 +98,18 @@ void GESpMatFullPvPosIC::doPivoting(size_t p)
 			}
 
 			if (isInconsistent) {
+				// Only include equations with non-zero RHS (truly inconsistent)
+				auto inconsistentEqnNos = std::make_shared<FullColumn<size_t>>();
+				auto rhsValues = std::make_shared<std::vector<double>>();
+				for (size_t i = p; i < pivotRowLimit; i++) {
+					double rhs = rightHandSideB->at(rowOrder->at(i));
+					if (std::abs(rhs) > consistencyTolerance) {
+						inconsistentEqnNos->push_back(rowOrder->at(i));
+						rhsValues->push_back(rhs);
+					}
+				}
 				throw InconsistentConstraintsError(
-					"Constraints are geometrically inconsistent (no solution exists)", eqnNos);
+					"Constraints are geometrically inconsistent (no solution exists)", inconsistentEqnNos, rhsValues);
 			}
 
 			throwSingularMatrixError("", eqnNos);
