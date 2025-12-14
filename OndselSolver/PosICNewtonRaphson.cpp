@@ -76,11 +76,11 @@ void PosICNewtonRaphson::run()
 				}
 			}
 
-			// Build diagnostic YAML message
+			// Build diagnostic YAML message with BEGIN/END markers for Python parsing
 			std::ostringstream oss;
 			oss << std::fixed << std::setprecision(6);
+			oss << "---BEGIN:INCONSISTENT_CONSTRAINTS---\n";
 			oss << "Constraints are geometrically inconsistent (no solution exists)\n";
-			oss << "INCONSISTENT_CONSTRAINTS:\n";
 			oss << "  affected_part: \"" << diagnostic->affectedPartName << "\"\n";
 			oss << "  total_violation: " << diagnostic->totalViolation << "\n";
 			oss << "  joints:\n";
@@ -107,9 +107,7 @@ void PosICNewtonRaphson::run()
 					oss << "          violation: " << conDiag.violation << "\n";
 				}
 			}
-
-			// Also log to system output
-			system->logString(oss.str());
+			oss << "---END:INCONSISTENT_CONSTRAINTS---\n";
 
 			// Re-throw with detailed message
 			throw InconsistentConstraintsError(oss.str());
