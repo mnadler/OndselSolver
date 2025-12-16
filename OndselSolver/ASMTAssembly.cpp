@@ -1447,6 +1447,10 @@ void MbD::ASMTAssembly::runKINEMATIC()
         mbdSystem->runKINEMATIC(mbdSystem);
     }
     catch (const SimulationStoppingError& ex) {
+        // Other simulation stopping errors - log and swallow
+        std::string errorMsg = "Simulation stopped: ";
+        errorMsg += ex.what();
+        mbdSystem->logString(errorMsg);
     }
 }
 

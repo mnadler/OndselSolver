@@ -17,6 +17,7 @@
 #include "PosICNewtonRaphson.h"
 #include "SingularMatrixError.h"
 #include "InconsistentConstraintsError.h"
+#include "SimulationStoppingError.h"
 #include "SystemSolver.h"
 #include "Part.h"
 #include "PartFrame.h"
@@ -231,6 +232,135 @@ void PosICNewtonRaphson::run()
 					removedEqnNos->push_back(redundantEqnNos->at(i));
 					removedRhsAtDetection->push_back(rhsAtDetection->at(i));
 				}
+			}
+		}
+		catch (SimulationStoppingError& ex) {
+			// Check if this is a convergence failure
+			std::string msg(ex.what());
+			if (msg.find("iterNo > iterMax") != std::string::npos) {
+				// Convergence failed - build diagnostic with joint information
+				system->logString("---BEGIN:CONVERGENCE_FAILURE---");
+				system->logString("Assembly solver failed to converge after maximum iterations");
+
+				// Reactivate redundant constraints
+				system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+					item->reactivateRedundantConstraints();
+				});
+
+				// Collect all violated equation numbers and values
+				auto violatedEqnNos = std::make_shared<FullColumn<size_t>>();
+				auto violationValues = std::make_shared<std::vector<double>>();
+
+				// Evaluate joint constraints
+				system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+					auto joint = std::dynamic_pointer_cast<Joint>(item);
+					if (joint) {
+						joint->constraintsDo([&](std::shared_ptr<Constraint> con) {
+							con->calcPostDynCorrectorIteration();
+							double violation = std::abs(con->aG);
+							if (violation > 1.0e-6) {
+								violatedEqnNos->push_back(con->iG);
+								violationValues->push_back(violation);
+							}
+						});
+					}
+				});
+
+				// Evaluate part constraints
+				system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+					auto part = std::dynamic_pointer_cast<Part>(item);
+					if (part && part->partFrame) {
+						auto aGeu = part->partFrame->aGeu;
+						if (aGeu) {
+							aGeu->calcPostDynCorrectorIteration();
+							double violation = std::abs(aGeu->aG);
+							if (violation > 1.0e-6) {
+								violatedEqnNos->push_back(aGeu->iG);
+								violationValues->push_back(violation);
+							}
+						}
+						if (part->partFrame->aGabs) {
+							for (auto& aGab : *(part->partFrame->aGabs)) {
+								aGab->calcPostDynCorrectorIteration();
+								double violation = std::abs(aGab->aG);
+								if (violation > 1.0e-6) {
+									violatedEqnNos->push_back(aGab->iG);
+									violationValues->push_back(violation);
+								}
+							}
+						}
+					}
+				});
+
+				// Build diagnostic using joint infrastructure
+				std::ostringstream oss;
+				oss << std::fixed << std::setprecision(6);
+				oss << "  total_iterations: 101\n";
+				oss << "  total_violations: " << violatedEqnNos->size() << "\n";
+
+				double totalViolation = 0.0;
+				for (auto v : *violationValues) {
+					totalViolation += v;
+				}
+				oss << "  total_violation_magnitude: " << totalViolation << "\n";
+				oss << "  joints:\n";
+
+				// Get joint diagnostics (includes part names, LCS info, positions)
+				system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+					auto joint = std::dynamic_pointer_cast<Joint>(item);
+					if (joint) {
+						auto jointDiag = joint->getJointDiagnostic(violatedEqnNos, violationValues);
+						if (!jointDiag.inconsistentConstraints.empty()) {
+							oss << "    - name: \"" << jointDiag.name << "\"\n";
+							oss << "      type: \"" << jointDiag.type << "\"\n";
+							oss << "      part_i: \"" << jointDiag.partIName << "\"\n";
+							oss << "      part_j: \"" << jointDiag.partJName << "\"\n";
+							oss << "      lcs_i:\n";
+							oss << "        name: \"" << jointDiag.lcsI.name << "\"\n";
+							oss << "        world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
+								<< jointDiag.lcsI.worldPosition[1] << ", " << jointDiag.lcsI.worldPosition[2] << "]\n";
+							oss << "      lcs_j:\n";
+							oss << "        name: \"" << jointDiag.lcsJ.name << "\"\n";
+							oss << "        world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
+								<< jointDiag.lcsJ.worldPosition[1] << ", " << jointDiag.lcsJ.worldPosition[2] << "]\n";
+							oss << "      violated_constraints:\n";
+							for (const auto& conDiag : jointDiag.inconsistentConstraints) {
+								oss << "        - type: \"" << conDiag.type << "\"\n";
+								oss << "          violation: " << conDiag.violation << "\n";
+								oss << "          equation: " << conDiag.equationNumber << "\n";
+							}
+						}
+					}
+				});
+
+				// Add part constraints that don't belong to joints
+				oss << "  part_constraints:\n";
+				system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+					auto part = std::dynamic_pointer_cast<Part>(item);
+					if (part && part->partFrame) {
+						auto aGeu = part->partFrame->aGeu;
+						if (aGeu && violatedEqnNos) {
+							auto it = std::find(violatedEqnNos->begin(), violatedEqnNos->end(), aGeu->iG);
+							if (it != violatedEqnNos->end()) {
+								size_t idx = std::distance(violatedEqnNos->begin(), it);
+								double violation = (idx < violationValues->size()) ? violationValues->at(idx) : aGeu->aG;
+								oss << "    - part: \"" << part->name << "\"\n";
+								oss << "      constraint: \"" << aGeu->constraintSpec() << "\"\n";
+								oss << "      violation: " << violation << "\n";
+								oss << "      equation: " << aGeu->iG << "\n";
+							}
+						}
+					}
+				});
+
+				system->logString(oss.str());
+				system->logString("---END:CONVERGENCE_FAILURE---");
+
+				// Re-throw to propagate error
+				throw;
+			} else {
+				// Other SimulationStoppingError - re-throw
+				throw;
 			}
 		}
 	}
