@@ -123,7 +123,7 @@ void Joint::inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>> i
 	}
 }
 
-JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos)
+JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos, std::shared_ptr<std::vector<double>> rhsValues)
 {
 	JointDiagnostic diag;
 	diag.name = this->name;
@@ -148,17 +148,21 @@ JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> i
 	diag.lcsJ.worldPosition = { frmJ->rOeO->at(0), frmJ->rOeO->at(1), frmJ->rOeO->at(2) };
 
 	// Get inconsistent constraints for this joint
-	// Only include constraints with significant violations (not near-zero)
-	const double violationTolerance = 1.0e-6;
+	// Use RHS values from exception if available (since con->aG may have been reset)
 	constraintsDo([&](std::shared_ptr<Constraint> con) {
-		if (std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), con->iG) != inconsistentEqnNos->end()) {
-			if (std::abs(con->aG) > violationTolerance) {
-				ConstraintDiagnostic conDiag;
-				conDiag.equationNumber = con->iG;
-				conDiag.type = con->constraintSpec();
+		auto it = std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), con->iG);
+		if (it != inconsistentEqnNos->end()) {
+			ConstraintDiagnostic conDiag;
+			conDiag.equationNumber = con->iG;
+			conDiag.type = con->constraintSpec();
+			// Use RHS value from exception if available, otherwise use current aG
+			if (rhsValues && !rhsValues->empty()) {
+				size_t index = std::distance(inconsistentEqnNos->begin(), it);
+				conDiag.violation = rhsValues->at(index);
+			} else {
 				conDiag.violation = con->aG;
-				diag.inconsistentConstraints.push_back(conDiag);
 			}
+			diag.inconsistentConstraints.push_back(conDiag);
 		}
 		});
 

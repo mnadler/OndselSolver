@@ -15,10 +15,11 @@ namespace MbD {
 
     class GESpMatFullPvPosIC : public GESpMatFullPv
     {
-        //system pivotRowLimits pivotRowLimit 
+        //system pivotRowLimits pivotRowLimit
     public:
         void preSolvewithsaveOriginal(SpMatDsptr spMat, FColDsptr fullCol, bool saveOriginal) override;
         void doPivoting(size_t p) override;
+        void postSolve() override;
 
         PosICNewtonRaphson* system; //Use raw pointer when pointing backwards.
         std::shared_ptr<std::vector<size_t>> pivotRowLimits;

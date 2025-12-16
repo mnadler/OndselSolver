@@ -25,8 +25,12 @@ namespace MbD {
         bool isConverged() override;
         void handleSingularMatrix() override;
         void lookForRedundantConstraints();
+        void verifyRemovedConstraintsAtConvergence();
 
         std::shared_ptr<std::vector<size_t>> pivotRowLimits;
+        // Track constraints removed as potentially-redundant for post-convergence verification
+        std::shared_ptr<std::vector<size_t>> removedEqnNos;
+        std::shared_ptr<std::vector<double>> removedRhsAtDetection;
     };
 }
 

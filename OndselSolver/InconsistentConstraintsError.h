@@ -32,10 +32,18 @@ namespace MbD {
 		std::vector<ConstraintDiagnostic> inconsistentConstraints;
 	};
 
+	struct PartConstraintDiagnostic {
+		std::string partName;
+		std::string constraintType;
+		size_t equationNumber;
+		double violation;
+	};
+
 	struct InconsistencyDiagnostic {
 		std::string affectedPartName;
 		double totalViolation = 0.0;
 		std::vector<JointDiagnostic> joints;
+		std::vector<PartConstraintDiagnostic> partConstraints;
 	};
 
 	class InconsistentConstraintsError : virtual public std::runtime_error

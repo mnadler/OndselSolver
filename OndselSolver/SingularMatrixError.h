@@ -19,11 +19,18 @@ namespace MbD {
 	{
 	protected:
 		std::shared_ptr<std::vector<size_t>> redundantEqnNos;
+		std::shared_ptr<std::vector<double>> rhsValues;
 
 	public:
 		explicit
 			SingularMatrixError(const std::string& msg, std::shared_ptr<FullColumn<size_t>> redunEqnNos) :
 			std::runtime_error(msg), redundantEqnNos(redunEqnNos)
+		{
+		}
+		explicit
+			SingularMatrixError(const std::string& msg, std::shared_ptr<FullColumn<size_t>> redunEqnNos,
+				std::shared_ptr<std::vector<double>> rhs) :
+			std::runtime_error(msg), redundantEqnNos(redunEqnNos), rhsValues(rhs)
 		{
 		}
 		explicit SingularMatrixError(const std::string& msg) : std::runtime_error(msg)
@@ -34,6 +41,10 @@ namespace MbD {
 
 		virtual std::shared_ptr<std::vector<size_t>> getRedundantEqnNos() const noexcept {
 			return redundantEqnNos;
+		}
+
+		virtual std::shared_ptr<std::vector<double>> getRhsValues() const noexcept {
+			return rhsValues;
 		}
 	};
 }

@@ -13,7 +13,6 @@
 
 #include "GESpMatFullPvPosIC.h"
 #include "SingularMatrixError.h"
-#include "InconsistentConstraintsError.h"
 #include "PosICNewtonRaphson.h"
 
 using namespace MbD;
@@ -83,36 +82,19 @@ void GESpMatFullPvPosIC::doPivoting(size_t p)
 			auto end = rowOrder->begin() + pivotRowLimit;
 			auto eqnNos = std::make_shared<FullColumn<size_t>>(begin, end);
 
-			// Check if the RHS entries for dependent rows are near-zero.
-			// If not, the constraints are inconsistent (no solution exists),
-			// not merely redundant (infinite solutions exist).
-			// This implements the augmented matrix rank test: rank(A) < rank([A|b])
-			// means inconsistent, while rank(A) = rank([A|b]) means redundant.
-			bool isInconsistent = false;
-			double consistencyTolerance = 1.0e-6;
+			// Capture RHS values for all potentially-redundant equations.
+			// We defer the inconsistency check to after the solver converges,
+			// because at this point we may be at an intermediate state where
+			// constraints appear violated but a solution still exists.
+			auto rhsValues = std::make_shared<std::vector<double>>();
 			for (size_t i = p; i < pivotRowLimit; i++) {
-				if (std::abs(rightHandSideB->at(rowOrder->at(i))) > consistencyTolerance) {
-					isInconsistent = true;
-					break;
-				}
+				rhsValues->push_back(rightHandSideB->at(rowOrder->at(i)));
 			}
 
-			if (isInconsistent) {
-				// Only include equations with non-zero RHS (truly inconsistent)
-				auto inconsistentEqnNos = std::make_shared<FullColumn<size_t>>();
-				auto rhsValues = std::make_shared<std::vector<double>>();
-				for (size_t i = p; i < pivotRowLimit; i++) {
-					double rhs = rightHandSideB->at(rowOrder->at(i));
-					if (std::abs(rhs) > consistencyTolerance) {
-						inconsistentEqnNos->push_back(rowOrder->at(i));
-						rhsValues->push_back(rhs);
-					}
-				}
-				throw InconsistentConstraintsError(
-					"Constraints are geometrically inconsistent (no solution exists)", inconsistentEqnNos, rhsValues);
-			}
-
-			throwSingularMatrixError("", eqnNos);
+			// Always throw SingularMatrixError with RHS values attached.
+			// PosICNewtonRaphson will verify at convergence if these constraints
+			// are truly redundant (satisfied at final state) or inconsistent.
+			throwSingularMatrixError("", eqnNos, rhsValues);
 		}
 		else {
 			pivotRowLimit = *itr;
@@ -132,4 +114,12 @@ void GESpMatFullPvPosIC::doPivoting(size_t p)
 		rowPositionsOfNonZerosInPivotColumn->erase(rowPositionsOfNonZerosInPivotColumn->begin());
 	}
 	markowitzPivotColCount = rowPositionsOfNonZerosInPivotColumn->size();
+}
+
+void GESpMatFullPvPosIC::postSolve()
+{
+	// No cleanup needed for this solver.
+	// This method is called after back substitution completes successfully.
+	// For GESpMatFullPvPosIC, all necessary work is done in doPivoting and
+	// backSubstituteIntoDU, so postSolve is a no-op.
 }

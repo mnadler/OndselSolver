@@ -79,3 +79,8 @@ void MatrixSolver::throwSingularMatrixError(const std::string& chars, std::share
 {
 	throw SingularMatrixError(chars, redunEqnNos);
 }
+
+void MatrixSolver::throwSingularMatrixError(const std::string& chars, std::shared_ptr<FullColumn<size_t>> redunEqnNos, std::shared_ptr<std::vector<double>> rhsValues)
+{
+	throw SingularMatrixError(chars, redunEqnNos, rhsValues);
+}

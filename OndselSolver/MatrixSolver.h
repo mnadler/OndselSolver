@@ -42,6 +42,7 @@ namespace MbD {
         virtual double getmatrixArowimaxMagnitude(size_t i) = 0;
         void throwSingularMatrixError(const std::string& chars);
         void throwSingularMatrixError(const std::string& chars, std::shared_ptr<FullColumn<size_t>> redunEqnNos);
+        void throwSingularMatrixError(const std::string& chars, std::shared_ptr<FullColumn<size_t>> redunEqnNos, std::shared_ptr<std::vector<double>> rhsValues);
 
         size_t m = 0, n = 0;
         FColDsptr answerX, rightHandSideB, rowScalings, pivotValues;

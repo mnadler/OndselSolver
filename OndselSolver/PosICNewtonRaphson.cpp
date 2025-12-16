@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <exception>
 #include <map>
+#include <set>
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -18,7 +19,9 @@
 #include "InconsistentConstraintsError.h"
 #include "SystemSolver.h"
 #include "Part.h"
+#include "PartFrame.h"
 #include "Constraint.h"
+#include "RedundantConstraint.h"
 #include "CREATE.h"
 #include "GESpMatParPvPrecise.h"
 #include "GESpMatFullPvPosIC.h"
@@ -28,6 +31,10 @@ using namespace MbD;
 
 void PosICNewtonRaphson::run()
 {
+	// Clear any previous tracking
+	removedEqnNos = nullptr;
+	removedRhsAtDetection = nullptr;
+
 	while (true) {
 		try {
 			//VectorNewtonRaphson::run();   //Inline to help debugging
@@ -36,29 +43,97 @@ void PosICNewtonRaphson::run()
 			initializeGlobally();
 			iterate();
 			postRun();
+			// After successful convergence, verify removed constraints are satisfied
+			verifyRemovedConstraintsAtConvergence();
 			break;
 		}
 		catch (InconsistentConstraintsError& ex) {
 			auto inconsistentEqnNos = ex.getInconsistentEqnNos();
+			auto rhsValues = ex.getRhsValues();
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->reactivateRedundantConstraints(); });
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->setqsu(qsuOld); });
+
+			// Build a map from equation number to RHS value for quick lookup
+			std::map<size_t, double> eqnToRhs;
+			if (inconsistentEqnNos && rhsValues) {
+				for (size_t i = 0; i < inconsistentEqnNos->size(); i++) {
+					eqnToRhs[inconsistentEqnNos->at(i)] = rhsValues->at(i);
+				}
+			}
 
 			// Build diagnostic information
 			auto diagnostic = std::make_shared<InconsistencyDiagnostic>();
 			std::map<std::string, int> partOccurrences;
+			std::set<size_t> matchedEqnNos;  // Track which equation numbers were matched
 
 			// Collect joint diagnostics
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
 				auto joint = std::dynamic_pointer_cast<Joint>(item);
 				if (joint) {
-					auto jointDiag = joint->getJointDiagnostic(inconsistentEqnNos);
+					auto jointDiag = joint->getJointDiagnostic(inconsistentEqnNos, rhsValues);
 					if (!jointDiag.inconsistentConstraints.empty()) {
 						diagnostic->joints.push_back(jointDiag);
 						if (!jointDiag.partIName.empty()) partOccurrences[jointDiag.partIName]++;
 						if (!jointDiag.partJName.empty()) partOccurrences[jointDiag.partJName]++;
+						for (const auto& conDiag : jointDiag.inconsistentConstraints) {
+							matchedEqnNos.insert(conDiag.equationNumber);
+						}
 					}
 				}
 			});
+
+			// Collect Part constraint diagnostics (aGeu, aGabs)
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+				auto part = std::dynamic_pointer_cast<Part>(item);
+				if (part && part->partFrame) {
+					// Check Euler constraint (aGeu)
+					auto aGeu = part->partFrame->aGeu;
+					if (aGeu && inconsistentEqnNos) {
+						auto it = std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), aGeu->iG);
+						if (it != inconsistentEqnNos->end()) {
+							PartConstraintDiagnostic pcDiag;
+							pcDiag.partName = part->name;
+							pcDiag.constraintType = aGeu->constraintSpec();
+							pcDiag.equationNumber = aGeu->iG;
+							// Use RHS value from exception if available, otherwise use current aG
+							auto rhsIt = eqnToRhs.find(aGeu->iG);
+							pcDiag.violation = (rhsIt != eqnToRhs.end()) ? rhsIt->second : aGeu->aG;
+							diagnostic->partConstraints.push_back(pcDiag);
+							partOccurrences[part->name]++;
+							matchedEqnNos.insert(aGeu->iG);
+						}
+					}
+					// Check absolute constraints (aGabs)
+					if (part->partFrame->aGabs && inconsistentEqnNos) {
+						for (auto& aGab : *(part->partFrame->aGabs)) {
+							auto it = std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), aGab->iG);
+							if (it != inconsistentEqnNos->end()) {
+								PartConstraintDiagnostic pcDiag;
+								pcDiag.partName = part->name;
+								pcDiag.constraintType = aGab->constraintSpec();
+								pcDiag.equationNumber = aGab->iG;
+								auto rhsIt = eqnToRhs.find(aGab->iG);
+								pcDiag.violation = (rhsIt != eqnToRhs.end()) ? rhsIt->second : aGab->aG;
+								diagnostic->partConstraints.push_back(pcDiag);
+								partOccurrences[part->name]++;
+								matchedEqnNos.insert(aGab->iG);
+							}
+						}
+					}
+				}
+			});
+
+			// Collect unmatched equation numbers (ones that weren't found in any constraint)
+			std::vector<std::pair<size_t, double>> unmatchedEqns;
+			if (inconsistentEqnNos) {
+				for (size_t i = 0; i < inconsistentEqnNos->size(); i++) {
+					size_t eqnNo = inconsistentEqnNos->at(i);
+					if (matchedEqnNos.find(eqnNo) == matchedEqnNos.end()) {
+						double rhs = (rhsValues && i < rhsValues->size()) ? rhsValues->at(i) : 0.0;
+						unmatchedEqns.push_back({eqnNo, rhs});
+					}
+				}
+			}
 
 			// Identify affected part (appears most frequently)
 			int maxCount = 0;
@@ -69,11 +144,19 @@ void PosICNewtonRaphson::run()
 				}
 			}
 
-			// Compute total violation
+			// Compute total violation from joints
 			for (const auto& jointDiag : diagnostic->joints) {
 				for (const auto& conDiag : jointDiag.inconsistentConstraints) {
 					diagnostic->totalViolation += std::abs(conDiag.violation);
 				}
+			}
+			// Compute total violation from part constraints
+			for (const auto& pcDiag : diagnostic->partConstraints) {
+				diagnostic->totalViolation += std::abs(pcDiag.violation);
+			}
+			// Compute total violation from unmatched equations
+			for (const auto& unmatched : unmatchedEqns) {
+				diagnostic->totalViolation += std::abs(unmatched.second);
 			}
 
 			// Build diagnostic YAML message with BEGIN/END markers for Python parsing
@@ -83,6 +166,8 @@ void PosICNewtonRaphson::run()
 			oss << "Constraints are geometrically inconsistent (no solution exists)\n";
 			oss << "  affected_part: \"" << diagnostic->affectedPartName << "\"\n";
 			oss << "  total_violation: " << diagnostic->totalViolation << "\n";
+			oss << "  inconsistent_equation_count: " << (inconsistentEqnNos ? inconsistentEqnNos->size() : 0) << "\n";
+			oss << "  nqsu: " << nqsu << "\n";
 			oss << "  joints:\n";
 			for (const auto& jointDiag : diagnostic->joints) {
 				oss << "    - name: \"" << jointDiag.name << "\"\n";
@@ -107,6 +192,24 @@ void PosICNewtonRaphson::run()
 					oss << "          violation: " << conDiag.violation << "\n";
 				}
 			}
+			oss << "  part_constraints:\n";
+			for (const auto& pcDiag : diagnostic->partConstraints) {
+				oss << "    - part: \"" << pcDiag.partName << "\"\n";
+				oss << "      type: \"" << pcDiag.constraintType << "\"\n";
+				oss << "      equation_number: " << pcDiag.equationNumber << "\n";
+				oss << "      violation: " << pcDiag.violation << "\n";
+			}
+			oss << "  unmatched_equations:\n";
+			for (const auto& unmatched : unmatchedEqns) {
+				oss << "    - equation_number: " << unmatched.first << "\n";
+				oss << "      rhs_value: " << unmatched.second << "\n";
+				// Provide hint about what this equation might be
+				if (unmatched.first < nqsu) {
+					oss << "      hint: \"DOF equation (index < nqsu=" << nqsu << "), not a constraint\"\n";
+				} else {
+					oss << "      hint: \"Unknown constraint type (not found in joints or parts)\"\n";
+				}
+			}
 			oss << "---END:INCONSISTENT_CONSTRAINTS---\n";
 
 			// Re-throw with detailed message
@@ -114,9 +217,21 @@ void PosICNewtonRaphson::run()
 		}
 		catch (const SingularMatrixError& ex) {
 			auto redundantEqnNos = ex.getRedundantEqnNos();
+			auto rhsAtDetection = ex.getRhsValues();
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->removeRedundantConstraints(redundantEqnNos); });
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->constraintsReport(); });
 			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->setqsu(qsuOld); });
+			// Store equation numbers and RHS for post-convergence verification
+			if (rhsAtDetection) {
+				if (!removedEqnNos) {
+					removedEqnNos = std::make_shared<std::vector<size_t>>();
+					removedRhsAtDetection = std::make_shared<std::vector<double>>();
+				}
+				for (size_t i = 0; i < redundantEqnNos->size(); i++) {
+					removedEqnNos->push_back(redundantEqnNos->at(i));
+					removedRhsAtDetection->push_back(rhsAtDetection->at(i));
+				}
+			}
 		}
 	}
 }
@@ -214,4 +329,84 @@ void PosICNewtonRaphson::lookForRedundantConstraints()
 	auto posICsolver = CREATE<GESpMatFullPvPosIC>::With();
 	posICsolver->system = this;
 	dx = posICsolver->solvewithsaveOriginal(pypx, y->negated(), false);
+}
+
+void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
+{
+	// If no constraints were removed, nothing to verify
+	if (!removedEqnNos || removedEqnNos->empty()) {
+		return;
+	}
+
+	// Get the current constraint residuals at the converged state
+	// by asking each RedundantConstraint to compute its wrapped constraint's aG
+	std::vector<std::pair<size_t, double>> inconsistentConstraints;
+	double consistencyTolerance = 1.0e-6;
+
+	system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+		auto joint = std::dynamic_pointer_cast<Joint>(item);
+		if (joint) {
+			joint->constraintsDo([&](std::shared_ptr<Constraint> con) {
+				if (con->isRedundant()) {
+					auto redunCon = std::static_pointer_cast<RedundantConstraint>(con);
+					auto wrappedCon = redunCon->constraint;
+					// Compute the constraint residual at the current (converged) state
+					wrappedCon->calcPostDynCorrectorIteration();
+					double residual = wrappedCon->aG;
+					if (std::abs(residual) > consistencyTolerance) {
+						inconsistentConstraints.push_back({wrappedCon->iG, residual});
+					}
+				}
+			});
+		}
+	});
+
+	// Also check Part constraints (aGeu, aGabs)
+	system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+		auto part = std::dynamic_pointer_cast<Part>(item);
+		if (part && part->partFrame) {
+			// Check Euler constraint
+			auto aGeu = part->partFrame->aGeu;
+			if (aGeu && aGeu->isRedundant()) {
+				auto redunCon = std::static_pointer_cast<RedundantConstraint>(aGeu);
+				auto wrappedCon = redunCon->constraint;
+				wrappedCon->calcPostDynCorrectorIteration();
+				double residual = wrappedCon->aG;
+				if (std::abs(residual) > consistencyTolerance) {
+					inconsistentConstraints.push_back({wrappedCon->iG, residual});
+				}
+			}
+			// Check absolute constraints
+			if (part->partFrame->aGabs) {
+				for (auto& aGab : *(part->partFrame->aGabs)) {
+					if (aGab->isRedundant()) {
+						auto redunCon = std::static_pointer_cast<RedundantConstraint>(aGab);
+						auto wrappedCon = redunCon->constraint;
+						wrappedCon->calcPostDynCorrectorIteration();
+						double residual = wrappedCon->aG;
+						if (std::abs(residual) > consistencyTolerance) {
+							inconsistentConstraints.push_back({wrappedCon->iG, residual});
+						}
+					}
+				}
+			}
+		}
+	});
+
+	// If we found any constraints that are truly inconsistent at convergence, throw error
+	if (!inconsistentConstraints.empty()) {
+		// Reactivate constraints first so the diagnostic code can access them
+		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->reactivateRedundantConstraints(); });
+
+		// Build the list of inconsistent equation numbers and RHS values
+		auto inconsistentEqnNos = std::make_shared<FullColumn<size_t>>();
+		auto rhsValues = std::make_shared<std::vector<double>>();
+		for (const auto& pair : inconsistentConstraints) {
+			inconsistentEqnNos->push_back(pair.first);
+			rhsValues->push_back(pair.second);
+		}
+
+		throw InconsistentConstraintsError(
+			"Constraints are geometrically inconsistent (no solution exists)", inconsistentEqnNos, rhsValues);
+	}
 }
