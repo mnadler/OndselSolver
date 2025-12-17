@@ -27,6 +27,8 @@
 #include "GESpMatParPvPrecise.h"
 #include "GESpMatFullPvPosIC.h"
 #include "Joint.h"
+#include "QuaternionConstraintIJ.h"
+#include "MarkerFrame.h"
 
 using namespace MbD;
 
@@ -35,6 +37,7 @@ void PosICNewtonRaphson::run()
 	// Clear any previous tracking
 	removedEqnNos = nullptr;
 	removedRhsAtDetection = nullptr;
+	hasRetriedWithPerturbation = false;
 
 	while (true) {
 		try {
@@ -45,7 +48,10 @@ void PosICNewtonRaphson::run()
 			iterate();
 			postRun();
 			// After successful convergence, verify removed constraints are satisfied
-			verifyRemovedConstraintsAtConvergence();
+			// Returns true if perturbation was applied and we need to retry
+			if (verifyRemovedConstraintsAtConvergence()) {
+				continue;  // Retry the solve after perturbation
+			}
 			break;
 		}
 		catch (InconsistentConstraintsError& ex) {
@@ -481,17 +487,24 @@ void PosICNewtonRaphson::lookForRedundantConstraints()
 	dx = posICsolver->solvewithsaveOriginal(pypx, y->negated(), false);
 }
 
-void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
+bool PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 {
 	// If no constraints were removed, nothing to verify
 	if (!removedEqnNos || removedEqnNos->empty()) {
-		return;
+		return false;  // No retry needed
 	}
 
 	// Get the current constraint residuals at the converged state
 	// by asking each RedundantConstraint to compute its wrapped constraint's aG
 	std::vector<std::pair<size_t, double>> inconsistentConstraints;
 	double consistencyTolerance = 1.0e-6;
+
+	// Track quaternion constraints separately for anti-parallel detection
+	// For quaternion constraints, |aG| > 0.1 indicates significant misalignment (~11.5 degrees)
+	// At 180 degrees (anti-parallel), |aG| approaches 1.0
+	double quaternionAntiParallelThreshold = 0.1;
+	bool hasQuaternionViolation = false;
+	Part* partToPerturb = nullptr;
 
 	system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
 		auto joint = std::dynamic_pointer_cast<Joint>(item);
@@ -507,6 +520,18 @@ void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 					double residual = wrappedCon->aG;
 					if (std::abs(residual) > consistencyTolerance) {
 						inconsistentConstraints.push_back({wrappedCon->iG, residual});
+
+						// Check if this is a quaternion constraint with significant violation
+						// This indicates potential anti-parallel configuration (180 degree misalignment)
+						// which causes a Jacobian degeneracy but is NOT true redundancy
+						auto quatCon = std::dynamic_pointer_cast<QuaternionConstraintIJ>(wrappedCon);
+						if (quatCon && std::abs(residual) > quaternionAntiParallelThreshold) {
+							hasQuaternionViolation = true;
+							// Get part from constraint's frame J (we'll perturb this part)
+							auto marker = quatCon->frmJ->getMarkerFrame();
+							auto pf = marker->getPartFrame();
+							partToPerturb = pf->getPart();
+						}
 					}
 				}
 			});
@@ -547,6 +572,57 @@ void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 
 	// If we found any constraints that are truly inconsistent at convergence, throw error
 	if (!inconsistentConstraints.empty()) {
+		// Check if this is an anti-parallel quaternion case that we can recover from
+		// by perturbing the configuration and retrying
+		if (hasQuaternionViolation && !hasRetriedWithPerturbation && partToPerturb) {
+			// Apply small perturbation (5 degrees around x-axis) to break the anti-parallel symmetry
+			// This allows the solver to find the correct solution instead of getting stuck
+			// at the degenerate Jacobian configuration
+			auto qE = partToPerturb->getqE();
+			double angle = 5.0 * M_PI / 180.0;  // 5 degrees
+			double s = sin(angle / 2.0);
+			double c = cos(angle / 2.0);
+
+			// Hamilton product: q_new = q * perturbation (rotation around x-axis)
+			// perturbation quaternion: [sin(angle/2), 0, 0, cos(angle/2)] = [s, 0, 0, c]
+			// But OndselSolver uses [x, y, z, w] ordering, so: [s, 0, 0, c]
+			double q0 = qE->at(0);  // x
+			double q1 = qE->at(1);  // y
+			double q2 = qE->at(2);  // z
+			double q3 = qE->at(3);  // w
+
+			// Hamilton product: q * p where p = [s, 0, 0, c]
+			// Result: [q3*s + q0*c, q1*c + q2*s, q2*c - q1*s, q3*c - q0*s]
+			auto newQE = std::make_shared<FullColumn<double>>(4);
+			newQE->at(0) = q3*s + q0*c;  // new x
+			newQE->at(1) = q1*c + q2*s;  // new y
+			newQE->at(2) = q2*c - q1*s;  // new z
+			newQE->at(3) = q3*c - q0*s;  // new w
+
+			// Normalize
+			double norm = sqrt(newQE->at(0)*newQE->at(0) + newQE->at(1)*newQE->at(1) +
+			                   newQE->at(2)*newQE->at(2) + newQE->at(3)*newQE->at(3));
+			for (size_t i = 0; i < 4; i++) {
+				newQE->at(i) = newQE->at(i) / norm;
+			}
+
+			partToPerturb->setqE(newQE);
+
+			// Reactivate all constraints and retry
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+				item->reactivateRedundantConstraints();
+			});
+
+			// Clear tracking so we start fresh
+			removedEqnNos = nullptr;
+			removedRhsAtDetection = nullptr;
+			hasRetriedWithPerturbation = true;
+
+			system->logString("MbD: Detected anti-parallel orientation (Jacobian degeneracy), perturbing and retrying...");
+			return true;  // Signal to retry
+		}
+
+		// Not a recoverable anti-parallel case, or retry already failed
 		// Reactivate constraints first so the diagnostic code can access them
 		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->reactivateRedundantConstraints(); });
 
@@ -561,4 +637,5 @@ void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 		throw InconsistentConstraintsError(
 			"Constraints are geometrically inconsistent (no solution exists)", inconsistentEqnNos, rhsValues);
 	}
+	return false;  // No retry needed - all removed constraints are satisfied
 }
