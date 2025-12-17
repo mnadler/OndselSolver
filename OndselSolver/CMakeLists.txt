@@ -262,6 +262,12 @@ set(ONDSELSOLVER_SRC
         PrescribedMotion.cpp
         Product.cpp
         QuasiIntegrator.cpp
+        QuaternionConstraintIJ.cpp
+        QuaternionConstraintIqcJc.cpp
+        QuaternionConstraintIqcJqc.cpp
+        QuaternionIecJec.cpp
+        QuaternionIeqcJec.cpp
+        QuaternionIeqcJeqc.cpp
         RackPinConstraintIJ.cpp
         RackPinConstraintIqcJc.cpp
         RackPinConstraintIqcJqc.cpp
@@ -578,6 +584,12 @@ set(ONDSELSOLVER_HEADERS
         PrescribedMotion.h
         Product.h
         QuasiIntegrator.h
+        QuaternionConstraintIJ.h
+        QuaternionConstraintIqcJc.h
+        QuaternionConstraintIqcJqc.h
+        QuaternionIecJec.h
+        QuaternionIeqcJec.h
+        QuaternionIeqcJeqc.h
         RackPinConstraintIJ.h
         RackPinConstraintIqcJc.h
         RackPinConstraintIqcJqc.h

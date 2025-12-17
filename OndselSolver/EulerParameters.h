@@ -64,6 +64,7 @@ public:
     static FMatDsptr pCpEtimesColumn(FColDsptr col);
     static FMatDsptr pCTpEtimesColumn(FColDsptr col);
     static std::shared_ptr<FullMatrix<FMatsptr<T>>> ppApEpEtimesMatrix(FMatDsptr mat);
+    static std::shared_ptr<EulerParameters<T>> fromRotationMatrix(FMatDsptr aA);
 
 
     void initialize() override;
@@ -405,5 +406,45 @@ inline std::shared_ptr<EulerParameters<T>> EulerParameters<T>::copy()
         answer->at(i) = this->at(i);
     }
     return answer;
+}
+
+template<>
+inline std::shared_ptr<EulerParameters<double>> EulerParameters<double>::fromRotationMatrix(FMatDsptr aA)
+{
+    // Convert 3x3 rotation matrix to quaternion using Shepperd's method
+    // Returns quaternion [e0, e1, e2, e3] = [x, y, z, w] in OndselSolver convention
+
+    auto qE = std::make_shared<EulerParameters<double>>(4);
+    double trace = aA->at(0)->at(0) + aA->at(1)->at(1) + aA->at(2)->at(2);
+
+    if (trace > 0) {
+        double s = 0.5 / std::sqrt(trace + 1.0);
+        qE->at(3) = 0.25 / s;  // w
+        qE->at(0) = (aA->at(2)->at(1) - aA->at(1)->at(2)) * s;  // x
+        qE->at(1) = (aA->at(0)->at(2) - aA->at(2)->at(0)) * s;  // y
+        qE->at(2) = (aA->at(1)->at(0) - aA->at(0)->at(1)) * s;  // z
+    }
+    else if (aA->at(0)->at(0) > aA->at(1)->at(1) && aA->at(0)->at(0) > aA->at(2)->at(2)) {
+        double s = 2.0 * std::sqrt(1.0 + aA->at(0)->at(0) - aA->at(1)->at(1) - aA->at(2)->at(2));
+        qE->at(3) = (aA->at(2)->at(1) - aA->at(1)->at(2)) / s;
+        qE->at(0) = 0.25 * s;
+        qE->at(1) = (aA->at(0)->at(1) + aA->at(1)->at(0)) / s;
+        qE->at(2) = (aA->at(0)->at(2) + aA->at(2)->at(0)) / s;
+    }
+    else if (aA->at(1)->at(1) > aA->at(2)->at(2)) {
+        double s = 2.0 * std::sqrt(1.0 + aA->at(1)->at(1) - aA->at(0)->at(0) - aA->at(2)->at(2));
+        qE->at(3) = (aA->at(0)->at(2) - aA->at(2)->at(0)) / s;
+        qE->at(0) = (aA->at(0)->at(1) + aA->at(1)->at(0)) / s;
+        qE->at(1) = 0.25 * s;
+        qE->at(2) = (aA->at(1)->at(2) + aA->at(2)->at(1)) / s;
+    }
+    else {
+        double s = 2.0 * std::sqrt(1.0 + aA->at(2)->at(2) - aA->at(0)->at(0) - aA->at(1)->at(1));
+        qE->at(3) = (aA->at(1)->at(0) - aA->at(0)->at(1)) / s;
+        qE->at(0) = (aA->at(0)->at(2) + aA->at(2)->at(0)) / s;
+        qE->at(1) = (aA->at(1)->at(2) + aA->at(2)->at(1)) / s;
+        qE->at(2) = 0.25 * s;
+    }
+    return qE;
 }
 }  // namespace MbD

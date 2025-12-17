@@ -131,6 +131,38 @@ std::shared_ptr<EulerParametersDot<double>> EndFrameqc::qEdot()
 	return markerFrame->qEdot();
 }
 
+std::shared_ptr<EulerParameters<double>> EndFrameqc::qE()
+{
+	return markerFrame->qE();
+}
+
+std::shared_ptr<EulerParameters<double>> EndFrameqc::qEO()
+{
+	// Compute world orientation quaternion: qEworld = qEpart * qEmarker
+	// This accounts for the marker frame's relative orientation to the part.
+	auto qEpart = markerFrame->qE();
+	auto qEmarker = markerFrame->qEpm;
+
+	auto result = std::make_shared<EulerParameters<double>>(4);
+
+	// Hamilton product: p = q1 * q2
+	// OndselSolver convention: [e0, e1, e2, e3] = [x, y, z, w]
+	// p[0] = q1[3]*q2[0] + q1[0]*q2[3] + q1[1]*q2[2] - q1[2]*q2[1]
+	// p[1] = q1[3]*q2[1] - q1[0]*q2[2] + q1[1]*q2[3] + q1[2]*q2[0]
+	// p[2] = q1[3]*q2[2] + q1[0]*q2[1] - q1[1]*q2[0] + q1[2]*q2[3]
+	// p[3] = q1[3]*q2[3] - q1[0]*q2[0] - q1[1]*q2[1] - q1[2]*q2[2]
+
+	double q1_0 = qEpart->at(0), q1_1 = qEpart->at(1), q1_2 = qEpart->at(2), q1_3 = qEpart->at(3);
+	double q2_0 = qEmarker->at(0), q2_1 = qEmarker->at(1), q2_2 = qEmarker->at(2), q2_3 = qEmarker->at(3);
+
+	result->at(0) = q1_3*q2_0 + q1_0*q2_3 + q1_1*q2_2 - q1_2*q2_1;
+	result->at(1) = q1_3*q2_1 - q1_0*q2_2 + q1_1*q2_3 + q1_2*q2_0;
+	result->at(2) = q1_3*q2_2 + q1_0*q2_1 - q1_1*q2_0 + q1_2*q2_3;
+	result->at(3) = q1_3*q2_3 - q1_0*q2_0 - q1_1*q2_1 - q1_2*q2_2;
+
+	return result;
+}
+
 FColDsptr EndFrameqc::qXddot()
 {
 	return markerFrame->qXddot();

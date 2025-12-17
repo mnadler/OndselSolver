@@ -66,6 +66,7 @@ namespace MbD {
 		std::shared_ptr<EulerParametersDot<double>> qEdot();
 		FColDsptr qXddot();
 		FColDsptr qEddot();
+		std::shared_ptr<EulerParameters<double>> qE();
 		FColFMatDsptr pAOppE();
 		FMatDsptr aBOp();
 		void postDynStep() override;
@@ -73,6 +74,7 @@ namespace MbD {
 		PartFrame* partFrame; //Use raw pointer when pointing backwards.
 		FColDsptr rpmp = std::make_shared<FullColumn<double>>(3);
 		FMatDsptr aApm = FullMatrix<double>::identitysptr(3);
+		std::shared_ptr<EulerParameters<double>> qEpm;  // quaternion form of aApm (constant, computed once)
 		FColDsptr rOmO = std::make_shared<FullColumn<double>>(3);
 		FMatDsptr aAOm = FullMatrix<double>::identitysptr(3);
 		FMatDsptr prOmOpE;

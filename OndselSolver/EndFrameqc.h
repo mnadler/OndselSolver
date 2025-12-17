@@ -35,6 +35,8 @@ namespace MbD {
         FRowDsptr priOeOpE(size_t i);
         FColDsptr qXdot();
         std::shared_ptr<EulerParametersDot<double>> qEdot();
+        std::shared_ptr<EulerParameters<double>> qE();
+        std::shared_ptr<EulerParameters<double>> qEO();  // world orientation quaternion (accounts for marker frame)
         FColDsptr qXddot();
         FColDsptr qEddot();
         FColDsptr rpep() override;

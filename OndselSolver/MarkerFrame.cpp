@@ -42,6 +42,7 @@ void MarkerFrame::initializeLocally()
 {
 	pprOmOpEpE = EulerParameters<double>::ppApEpEtimesColumn(rpmp);
 	ppAOmpEpE = EulerParameters<double>::ppApEpEtimesMatrix(aApm);
+	qEpm = EulerParameters<double>::fromRotationMatrix(aApm);
 	for (size_t i = 0; i < endFrames->size(); i++)
 	{
 		auto eFrmqc = std::dynamic_pointer_cast<EndFrameqc>(endFrames->at(i));
@@ -207,6 +208,11 @@ FColDsptr MarkerFrame::qXddot()
 FColDsptr MarkerFrame::qEddot()
 {
 	return partFrame->qEddot;
+}
+
+std::shared_ptr<EulerParameters<double>> MarkerFrame::qE()
+{
+	return partFrame->qE;
 }
 
 void MarkerFrame::setqsuddotlam(FColDsptr col)
