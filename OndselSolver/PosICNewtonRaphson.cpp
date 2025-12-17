@@ -480,8 +480,10 @@ void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 				if (con->isRedundant()) {
 					auto redunCon = std::static_pointer_cast<RedundantConstraint>(con);
 					auto wrappedCon = redunCon->constraint;
-					// Compute the constraint residual at the current (converged) state
-					wrappedCon->calcPostDynCorrectorIteration();
+					// Use postPosICIteration() which updates all intermediate helper objects
+					// (like aAijIeJe in DirectionCosineConstraint) before computing aG.
+					// Just calling calcPostDynCorrectorIteration() doesn't update the helpers.
+					wrappedCon->postPosICIteration();
 					double residual = wrappedCon->aG;
 					if (std::abs(residual) > consistencyTolerance) {
 						inconsistentConstraints.push_back({wrappedCon->iG, residual});
@@ -500,7 +502,7 @@ void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 			if (aGeu && aGeu->isRedundant()) {
 				auto redunCon = std::static_pointer_cast<RedundantConstraint>(aGeu);
 				auto wrappedCon = redunCon->constraint;
-				wrappedCon->calcPostDynCorrectorIteration();
+				wrappedCon->postPosICIteration();
 				double residual = wrappedCon->aG;
 				if (std::abs(residual) > consistencyTolerance) {
 					inconsistentConstraints.push_back({wrappedCon->iG, residual});
@@ -512,7 +514,7 @@ void PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 					if (aGab->isRedundant()) {
 						auto redunCon = std::static_pointer_cast<RedundantConstraint>(aGab);
 						auto wrappedCon = redunCon->constraint;
-						wrappedCon->calcPostDynCorrectorIteration();
+						wrappedCon->postPosICIteration();
 						double residual = wrappedCon->aG;
 						if (std::abs(residual) > consistencyTolerance) {
 							inconsistentConstraints.push_back({wrappedCon->iG, residual});
