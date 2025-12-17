@@ -1,5 +1,4 @@
 #include <memory>
-#include <iostream>
 
 #include "QuaternionIecJec.h"
 #include "EndFrameqc.h"
@@ -15,7 +14,6 @@ QuaternionIecJec::QuaternionIecJec(EndFrmsptr frmi, EndFrmsptr frmj, size_t axs)
 
 void QuaternionIecJec::calcPostDynCorrectorIteration()
 {
-	std::cerr << "QuaternionIecJec::calcPostDynCorrectorIteration START axis=" << axis << std::endl;
 	// Compute imaginary component [axis] of conj(qI) * qJ
 	// This uses the Hamilton product formula.
 	// qE = [e0, e1, e2, e3] where e0,e1,e2 = imaginary (x,y,z), e3 = scalar (w)
@@ -25,15 +23,10 @@ void QuaternionIecJec::calcPostDynCorrectorIteration()
 	// which accounts for the marker frame's relative orientation (aApm).
 	// qEO = qEpart * qEmarker
 
-	std::cerr << "  frmI=" << frmI.get() << " frmJ=" << frmJ.get() << std::endl;
 	auto efrmI = std::static_pointer_cast<EndFrameqc>(frmI);
 	auto efrmJ = std::static_pointer_cast<EndFrameqc>(frmJ);
-	std::cerr << "  efrmI=" << efrmI.get() << " efrmJ=" << efrmJ.get() << std::endl;
-	std::cerr << "  efrmI->markerFrame=" << efrmI->markerFrame << std::endl;
 	auto qEI = efrmI->qEO();  // Use world quaternion, not part quaternion
-	std::cerr << "  qEI obtained" << std::endl;
 	auto qEJ = efrmJ->qEO();  // Use world quaternion, not part quaternion
-	std::cerr << "  qEJ obtained" << std::endl;
 
 	double qI0 = qEI->at(0);
 	double qI1 = qEI->at(1);
@@ -61,7 +54,6 @@ void QuaternionIecJec::calcPostDynCorrectorIteration()
 	else { // axis == 2
 		aQijIeJe = qI3*qJ2 - qI0*qJ1 + qI1*qJ0 - qI2*qJ3;
 	}
-	std::cerr << "QuaternionIecJec::calcPostDynCorrectorIteration END aQijIeJe=" << aQijIeJe << std::endl;
 }
 
 double MbD::QuaternionIecJec::value()

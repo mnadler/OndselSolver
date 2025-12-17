@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <memory>
 #include <typeinfo>
+#include <cmath>
 
 #include "Joint.h"
 #include "Constraint.h"
@@ -146,6 +147,35 @@ JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> i
 	diag.lcsJ.name = markerJ->name;
 	diag.lcsJ.positionOnPart = { markerJ->rpmp->at(0), markerJ->rpmp->at(1), markerJ->rpmp->at(2) };
 	diag.lcsJ.worldPosition = { frmJ->rOeO->at(0), frmJ->rOeO->at(1), frmJ->rOeO->at(2) };
+
+	// Get world orientations
+	auto efrmI = std::dynamic_pointer_cast<EndFrameqc>(frmI);
+	auto efrmJ = std::dynamic_pointer_cast<EndFrameqc>(frmJ);
+	if (efrmI && efrmJ) {
+		auto qI = efrmI->qEO();
+		auto qJ = efrmJ->qEO();
+
+		diag.lcsI.worldQuaternion = {qI->at(0), qI->at(1), qI->at(2), qI->at(3)};
+		diag.lcsJ.worldQuaternion = {qJ->at(0), qJ->at(1), qJ->at(2), qJ->at(3)};
+
+		// Compute relative quaternion: conj(qI) * qJ
+		// conj(qI) = (-qI0, -qI1, -qI2, qI3)
+		double relW = qI->at(3)*qJ->at(3) + qI->at(0)*qJ->at(0)
+		            + qI->at(1)*qJ->at(1) + qI->at(2)*qJ->at(2);
+		double relX = qI->at(3)*qJ->at(0) - qI->at(0)*qJ->at(3)
+		            - qI->at(1)*qJ->at(2) + qI->at(2)*qJ->at(1);
+		double relY = qI->at(3)*qJ->at(1) + qI->at(0)*qJ->at(2)
+		            - qI->at(1)*qJ->at(3) - qI->at(2)*qJ->at(0);
+		double relZ = qI->at(3)*qJ->at(2) - qI->at(0)*qJ->at(1)
+		            + qI->at(1)*qJ->at(0) - qI->at(2)*qJ->at(3);
+
+		diag.relativeQuaternion = {relX, relY, relZ, relW};
+
+		// Angle = 2 * acos(|w|) in degrees
+		double clampedW = std::fabs(relW);
+		if (clampedW > 1.0) clampedW = 1.0;
+		diag.relativeAngleDegrees = 2.0 * std::acos(clampedW) * 180.0 / M_PI;
+	}
 
 	// Get inconsistent constraints for this joint
 	// Use RHS values from exception if available (since con->aG may have been reset)

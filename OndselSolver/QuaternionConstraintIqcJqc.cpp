@@ -1,5 +1,3 @@
-#include <iostream>
-
 #include "QuaternionConstraintIqcJqc.h"
 #include "QuaternionIeqcJeqc.h"
 #include "EndFrameqc.h"
@@ -10,14 +8,11 @@ using namespace MbD;
 QuaternionConstraintIqcJqc::QuaternionConstraintIqcJqc(EndFrmsptr frmi, EndFrmsptr frmj, size_t axs) :
 	QuaternionConstraintIqcJc(frmi, frmj, axs)
 {
-	std::cerr << "QuaternionConstraintIqcJqc constructor DONE axis=" << axs << std::endl;
 }
 
 void QuaternionConstraintIqcJqc::initaQijIeJe()
 {
-	std::cerr << "QuaternionConstraintIqcJqc::initaQijIeJe() START" << std::endl;
 	aQijIeJe = CREATE<QuaternionIeqcJeqc>::With(frmI, frmJ, axis);
-	std::cerr << "QuaternionConstraintIqcJqc::initaQijIeJe() DONE" << std::endl;
 }
 
 void QuaternionConstraintIqcJqc::calcPostDynCorrectorIteration()

@@ -1,5 +1,3 @@
-#include <iostream>
-
 #include "QuaternionConstraintIqcJc.h"
 #include "QuaternionIeqcJec.h"
 #include "EndFrameqc.h"
@@ -10,7 +8,6 @@ using namespace MbD;
 QuaternionConstraintIqcJc::QuaternionConstraintIqcJc(EndFrmsptr frmi, EndFrmsptr frmj, size_t axs) :
 	QuaternionConstraintIJ(frmi, frmj, axs)
 {
-	std::cerr << "QuaternionConstraintIqcJc constructor DONE axis=" << axs << std::endl;
 }
 
 void QuaternionConstraintIqcJc::initaQijIeJe()

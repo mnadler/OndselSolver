@@ -14,6 +14,7 @@ namespace MbD {
 		std::string name;
 		std::array<double, 3> positionOnPart;
 		std::array<double, 3> worldPosition;
+		std::array<double, 4> worldQuaternion = {0, 0, 0, 1};  // [x, y, z, w]
 	};
 
 	struct ConstraintDiagnostic {
@@ -29,6 +30,8 @@ namespace MbD {
 		std::string partJName;
 		LCSDiagnostic lcsI;
 		LCSDiagnostic lcsJ;
+		double relativeAngleDegrees = 0.0;  // Angle between frames
+		std::array<double, 4> relativeQuaternion = {0, 0, 0, 1};  // conj(qI) * qJ: [x, y, z, w]
 		std::vector<ConstraintDiagnostic> inconsistentConstraints;
 	};
 

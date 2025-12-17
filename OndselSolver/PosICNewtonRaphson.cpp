@@ -181,12 +181,22 @@ void PosICNewtonRaphson::run()
 					<< jointDiag.lcsI.positionOnPart[1] << ", " << jointDiag.lcsI.positionOnPart[2] << "]\n";
 				oss << "        world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
 					<< jointDiag.lcsI.worldPosition[1] << ", " << jointDiag.lcsI.worldPosition[2] << "]\n";
+				oss << "        world_quaternion: [" << jointDiag.lcsI.worldQuaternion[0] << ", "
+					<< jointDiag.lcsI.worldQuaternion[1] << ", " << jointDiag.lcsI.worldQuaternion[2] << ", "
+					<< jointDiag.lcsI.worldQuaternion[3] << "]\n";
 				oss << "      lcs_j:\n";
 				oss << "        name: \"" << jointDiag.lcsJ.name << "\"\n";
 				oss << "        position_on_part: [" << jointDiag.lcsJ.positionOnPart[0] << ", "
 					<< jointDiag.lcsJ.positionOnPart[1] << ", " << jointDiag.lcsJ.positionOnPart[2] << "]\n";
 				oss << "        world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
 					<< jointDiag.lcsJ.worldPosition[1] << ", " << jointDiag.lcsJ.worldPosition[2] << "]\n";
+				oss << "        world_quaternion: [" << jointDiag.lcsJ.worldQuaternion[0] << ", "
+					<< jointDiag.lcsJ.worldQuaternion[1] << ", " << jointDiag.lcsJ.worldQuaternion[2] << ", "
+					<< jointDiag.lcsJ.worldQuaternion[3] << "]\n";
+				oss << "      relative_angle_degrees: " << jointDiag.relativeAngleDegrees << "\n";
+				oss << "      relative_quaternion: [" << jointDiag.relativeQuaternion[0] << ", "
+					<< jointDiag.relativeQuaternion[1] << ", " << jointDiag.relativeQuaternion[2] << ", "
+					<< jointDiag.relativeQuaternion[3] << "]\n";
 				oss << "      inconsistent_constraints:\n";
 				for (const auto& conDiag : jointDiag.inconsistentConstraints) {
 					oss << "        - type: \"" << conDiag.type << "\"\n";
@@ -319,10 +329,20 @@ void PosICNewtonRaphson::run()
 							oss << "        name: \"" << jointDiag.lcsI.name << "\"\n";
 							oss << "        world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
 								<< jointDiag.lcsI.worldPosition[1] << ", " << jointDiag.lcsI.worldPosition[2] << "]\n";
+							oss << "        world_quaternion: [" << jointDiag.lcsI.worldQuaternion[0] << ", "
+								<< jointDiag.lcsI.worldQuaternion[1] << ", " << jointDiag.lcsI.worldQuaternion[2] << ", "
+								<< jointDiag.lcsI.worldQuaternion[3] << "]\n";
 							oss << "      lcs_j:\n";
 							oss << "        name: \"" << jointDiag.lcsJ.name << "\"\n";
 							oss << "        world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
 								<< jointDiag.lcsJ.worldPosition[1] << ", " << jointDiag.lcsJ.worldPosition[2] << "]\n";
+							oss << "        world_quaternion: [" << jointDiag.lcsJ.worldQuaternion[0] << ", "
+								<< jointDiag.lcsJ.worldQuaternion[1] << ", " << jointDiag.lcsJ.worldQuaternion[2] << ", "
+								<< jointDiag.lcsJ.worldQuaternion[3] << "]\n";
+							oss << "      relative_angle_degrees: " << jointDiag.relativeAngleDegrees << "\n";
+							oss << "      relative_quaternion: [" << jointDiag.relativeQuaternion[0] << ", "
+								<< jointDiag.relativeQuaternion[1] << ", " << jointDiag.relativeQuaternion[2] << ", "
+								<< jointDiag.relativeQuaternion[3] << "]\n";
 							oss << "      violated_constraints:\n";
 							for (const auto& conDiag : jointDiag.inconsistentConstraints) {
 								oss << "        - type: \"" << conDiag.type << "\"\n";
