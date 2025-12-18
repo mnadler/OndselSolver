@@ -1,4 +1,4 @@
-# Plan: Iterative Constraint Protection for Redundancy Detection
+# Iterative Constraint Protection for Redundancy Detection
 
 ## Problem Statement
 
@@ -7,13 +7,13 @@ When OndselSolver encounters a singular Jacobian matrix during Newton-Raphson it
 1. **Truly redundant constraints**: Algebraically dependent on other constraints (safe to remove)
 2. **Configuration-dependent singularities**: Constraints that are essential but have a temporarily singular Jacobian (e.g., 180° anti-parallel quaternion orientations)
 
-The current behavior removes essential constraints, causing the solver to converge to **wrong solutions** where parts are massively misaligned (e.g., 106° off instead of 0°).
+The previous behavior removed essential constraints, causing the solver to converge to **wrong solutions** where parts are massively misaligned (e.g., 106° off instead of 0°).
 
 ## Objectives
 
 **(a) Correct Assemblies**: Solve successfully, removing only truly redundant constraints (no information loss)
 
-**(b) Inconsistent Assemblies**: Return the best possible visualization with descriptive error text
+**(b) Inconsistent Assemblies**: Display the best possible visualization with descriptive error text in the console
 
 ## Solution: Iterative Protection Approach
 
@@ -26,7 +26,8 @@ After the solver converges, we can determine which removed constraints were esse
 ### Algorithm
 
 ```
-protectedEqnNos = {}  // Set of equation numbers that cannot be removed
+protectedConstraints = {}  // Set of Constraint* that cannot be removed
+bestEffortState = nullptr  // Saved converged state before retry
 
 while true:
     try:
@@ -40,21 +41,33 @@ while true:
                 break
             else:
                 // Some removed constraints were essential
-                protectedEqnNos.add(essential_constraints)
+                bestEffortState = save_current_positions()
+                protectedConstraints.add(essential_constraints)
                 reactivate_all_constraints()
+                reset_to_initial_positions()
                 continue  // Retry with protections
 
     catch SingularMatrixError(eqnNos):
         // Filter out protected constraints
-        toRemove = eqnNos - protectedEqnNos
+        toRemove = eqnNos - protectedConstraints
 
         if toRemove is empty:
             // Can't remove anything, can't converge
-            throw InconsistentConstraintsError with current visual state
+            restore bestEffortState (if available)
+            log YAML diagnostic
+            return normally  // Don't throw - let FreeCAD display best-effort state
 
         remove_constraints(toRemove)
         continue
 ```
+
+### Key Design Decisions
+
+1. **Using Constraint pointers instead of equation numbers**: Equation numbers (`iG`) change between retries when constraints are reactivated. Using `std::set<Constraint*>` ensures protected constraints remain protected across retries.
+
+2. **Saving best-effort state**: Before retrying with protections, we save the current converged state. If the assembly is ultimately inconsistent, this best-effort state is restored for visualization.
+
+3. **Returning instead of throwing**: When constraints are inconsistent, instead of throwing `InconsistentConstraintsError`, we log the diagnostic and return normally. This allows FreeCAD to call `setNewPlacements()` and display the best-effort state.
 
 ### Termination Guarantee
 
@@ -70,26 +83,47 @@ Since there are finite constraints, the algorithm terminates in at most N iterat
 |----------|--------|
 | Correct assembly with redundancy | Converges correctly, only truly redundant constraints removed |
 | Correct assembly with anti-parallel parts | Iteratively learns which constraints are essential, eventually converges |
-| Inconsistent assembly | Hits "can't remove, can't converge" state, reports error with visualization |
+| Inconsistent assembly | Returns best-effort state with YAML diagnostic logged to console |
 
 ---
 
-## Implementation Details
+## Implementation
 
 ### File: `OndselSolver/PosICNewtonRaphson.h`
 
-Add new member variable:
-
 ```cpp
-// In class PosICNewtonRaphson
-std::set<size_t> protectedEqnNos;  // Equation numbers that cannot be removed as redundant
+class PosICNewtonRaphson : public AnyPosICNewtonRaphson
+{
+public:
+    void run() override;
+    void preRun() override;
+    void assignEquationNumbers() override;
+    bool isConverged() override;
+    void handleSingularMatrix() override;
+    void lookForRedundantConstraints();
+    bool verifyRemovedConstraintsAtConvergence();  // Returns true if retry needed
+
+    std::shared_ptr<std::vector<size_t>> pivotRowLimits;
+
+    // Track constraints removed as potentially-redundant for post-convergence verification
+    std::shared_ptr<std::vector<size_t>> removedEqnNos;
+    std::shared_ptr<std::vector<double>> removedRhsAtDetection;
+
+    // Constraint pointers that cannot be removed as redundant (learned to be essential)
+    // Using pointers instead of equation numbers because iG changes on each retry
+    std::set<Constraint*> protectedConstraints;
+
+    // Track ALL constraints ever removed across all iterations for final violation reporting
+    std::set<Constraint*> allRemovedConstraints;
+
+    // Best effort converged state - saved before retrying, restored before returning on error
+    FColDsptr bestEffortState;
+};
 ```
 
 ### File: `OndselSolver/PosICNewtonRaphson.cpp`
 
-#### 1. Modify `run()` - Clear protections at start
-
-At the beginning of `run()`, clear the protection set for a fresh solve:
+#### Structure of `run()`
 
 ```cpp
 void PosICNewtonRaphson::run()
@@ -97,158 +131,78 @@ void PosICNewtonRaphson::run()
     // Clear any previous tracking
     removedEqnNos = nullptr;
     removedRhsAtDetection = nullptr;
-    protectedEqnNos.clear();
+    protectedConstraints.clear();
+    allRemovedConstraints.clear();
 
-    while (true) {
-        // ... existing code ...
+    try {  // OUTER try - catches ALL InconsistentConstraintsError for YAML processing
+        while (true) {
+            try {
+                preRun();
+                initializeLocally();
+                initializeGlobally();
+                iterate();
+                postRun();
+
+                // After successful convergence, verify removed constraints are satisfied
+                if (verifyRemovedConstraintsAtConvergence()) {
+                    continue;  // Retry the solve with protected constraints
+                }
+                break;  // Success
+            }
+            catch (const SingularMatrixError& ex) {
+                // Filter out protected constraints from removal candidates
+                // If all are protected, throw InconsistentConstraintsError
+                // Otherwise, remove non-protected constraints and retry
+                // ...
+            }
+        }
+    }
+    catch (InconsistentConstraintsError& ex) {
+        // Build YAML diagnostic with joint/constraint details
+        // Restore bestEffortState if available
+        // Log diagnostic and RETURN (don't re-throw)
+        system->logString(diagnostic);
+        return;  // Let FreeCAD display best-effort state
     }
 }
 ```
 
-#### 2. Modify `SingularMatrixError` catch block - Filter protected constraints
+#### `verifyRemovedConstraintsAtConvergence()`
 
-Replace the existing catch block (around line 235) with filtering logic:
-
-```cpp
-catch (const SingularMatrixError& ex) {
-    auto redundantEqnNos = ex.getRedundantEqnNos();
-    auto rhsAtDetection = ex.getRhsValues();
-
-    // Filter out protected constraints
-    auto toRemove = std::make_shared<FullColumn<size_t>>();
-    auto toRemoveRhs = std::make_shared<std::vector<double>>();
-
-    for (size_t i = 0; i < redundantEqnNos->size(); i++) {
-        size_t eqnNo = redundantEqnNos->at(i);
-        if (protectedEqnNos.find(eqnNo) == protectedEqnNos.end()) {
-            toRemove->push_back(eqnNo);
-            if (rhsAtDetection && i < rhsAtDetection->size()) {
-                toRemoveRhs->push_back(rhsAtDetection->at(i));
-            }
-        }
-    }
-
-    // If all singular constraints are protected, we're stuck
-    if (toRemove->empty()) {
-        // Reactivate constraints so diagnostic code can access them
-        system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-            item->reactivateRedundantConstraints();
-        });
-
-        // Build error with current state
-        throw InconsistentConstraintsError(
-            "Cannot solve: all singular constraints are protected",
-            redundantEqnNos, rhsAtDetection);
-    }
-
-    // Remove only non-protected constraints
-    system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-        item->removeRedundantConstraints(toRemove);
-    });
-    system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-        item->constraintsReport();
-    });
-    system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-        item->setqsu(qsuOld);
-    });
-
-    // Store for post-convergence verification
-    if (!toRemoveRhs->empty()) {
-        if (!removedEqnNos) {
-            removedEqnNos = std::make_shared<std::vector<size_t>>();
-            removedRhsAtDetection = std::make_shared<std::vector<double>>();
-        }
-        for (size_t i = 0; i < toRemove->size(); i++) {
-            removedEqnNos->push_back(toRemove->at(i));
-            if (i < toRemoveRhs->size()) {
-                removedRhsAtDetection->push_back(toRemoveRhs->at(i));
-            }
-        }
-    }
-}
-```
-
-#### 3. Modify `verifyRemovedConstraintsAtConvergence()` - Add protection logic
-
-Update the function to protect essential constraints instead of just throwing an error:
+This function checks if any constraints marked as redundant actually have non-zero residuals at convergence:
 
 ```cpp
 bool PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 {
     // If no constraints were removed, nothing to verify
     if (!removedEqnNos || removedEqnNos->empty()) {
-        return false;  // No retry needed
+        return false;
     }
 
-    // Get the current constraint residuals at the converged state
-    std::vector<std::pair<size_t, double>> inconsistentConstraints;
+    // Check residuals of all RedundantConstraint wrappers
+    std::map<Constraint*, double> essentialConstraints;
     double consistencyTolerance = 1.0e-6;
 
-    system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-        auto joint = std::dynamic_pointer_cast<Joint>(item);
-        if (joint) {
-            joint->constraintsDo([&](std::shared_ptr<Constraint> con) {
-                if (con->isRedundant()) {
-                    auto redunCon = std::static_pointer_cast<RedundantConstraint>(con);
-                    auto wrappedCon = redunCon->constraint;
-                    wrappedCon->postPosICIteration();
-                    double residual = wrappedCon->aG;
-                    if (std::abs(residual) > consistencyTolerance) {
-                        inconsistentConstraints.push_back({wrappedCon->iG, residual});
-                    }
-                }
-            });
-        }
-    });
+    // Check joint constraints...
+    // Check part constraints (aGeu, aGabs)...
 
-    // Also check Part constraints (aGeu, aGabs)
-    system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-        auto part = std::dynamic_pointer_cast<Part>(item);
-        if (part && part->partFrame) {
-            auto aGeu = part->partFrame->aGeu;
-            if (aGeu && aGeu->isRedundant()) {
-                auto redunCon = std::static_pointer_cast<RedundantConstraint>(aGeu);
-                auto wrappedCon = redunCon->constraint;
-                wrappedCon->postPosICIteration();
-                double residual = wrappedCon->aG;
-                if (std::abs(residual) > consistencyTolerance) {
-                    inconsistentConstraints.push_back({wrappedCon->iG, residual});
-                }
-            }
-            if (part->partFrame->aGabs) {
-                for (auto& aGab : *(part->partFrame->aGabs)) {
-                    if (aGab->isRedundant()) {
-                        auto redunCon = std::static_pointer_cast<RedundantConstraint>(aGab);
-                        auto wrappedCon = redunCon->constraint;
-                        wrappedCon->postPosICIteration();
-                        double residual = wrappedCon->aG;
-                        if (std::abs(residual) > consistencyTolerance) {
-                            inconsistentConstraints.push_back({wrappedCon->iG, residual});
-                        }
-                    }
-                }
-            }
-        }
-    });
+    if (!essentialConstraints.empty()) {
+        // Log which constraints are being protected
+        // Save bestEffortState before retry
+        bestEffortState = std::make_shared<FullColumn<double>>(nqsu);
+        system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+            item->fillqsu(bestEffortState);
+        });
 
-    if (!inconsistentConstraints.empty()) {
-        // Protect these constraints from future removal
-        std::ostringstream protectedMsg;
-        protectedMsg << "MbD: Protecting " << inconsistentConstraints.size()
-                     << " essential constraint(s) from removal:";
-        for (const auto& pair : inconsistentConstraints) {
-            protectedEqnNos.insert(pair.first);
-            protectedMsg << " " << pair.first;
+        // Add to protected set
+        for (const auto& pair : essentialConstraints) {
+            protectedConstraints.insert(pair.first);
         }
-        system->logString(protectedMsg.str());
 
-        // Reactivate ALL constraints and retry
+        // Reactivate ALL constraints and reset to initial positions
         system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
             item->reactivateRedundantConstraints();
         });
-
-        // CRITICAL: Reset positions to initial state before retry
-        // Without this, we start from the wrong converged state and hit different singularities
         system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
             item->setqsu(qsuOld);
         });
@@ -260,46 +214,106 @@ bool PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
         return true;  // Signal to retry
     }
 
-    return false;  // No retry needed - all removed constraints are truly redundant
+    return false;  // All removed constraints are truly redundant
 }
 ```
 
-### Required Include
+### File: `OndselSolver/ASMTAssembly.cpp`
 
-Ensure `<set>` is included in `PosICNewtonRaphson.cpp`:
+Since we no longer throw exceptions for inconsistent constraints, `runKINEMATIC()` is simplified:
 
 ```cpp
-#include <set>
+void MbD::ASMTAssembly::runKINEMATIC()
+{
+    mbdSystem = std::make_shared<System>();
+    mbdSystem->externalSystem->asmtAssembly = this;
+    mbdSystem->runKINEMATIC(mbdSystem);
+}
 ```
 
 ---
 
-## Code Flow After Changes
+## YAML Diagnostic Format
+
+When constraints are inconsistent, a YAML diagnostic is logged to the console:
+
+```yaml
+---BEGIN:INCONSISTENT_CONSTRAINTS---
+Constraints are geometrically inconsistent (no solution exists)
+  affected_part: "PartName"
+  total_violation: 0.123456
+  inconsistent_equation_count: 3
+  nqsu: 14
+  joints:
+    - name: "JointName"
+      type: "RevoluteJoint"
+      part_i: "Part1"
+      part_j: "Part2"
+      lcs_i:
+        name: "LCS_Origin"
+        position_on_part: [0.0, 0.0, 0.0]
+        world_position: [1.0, 2.0, 3.0]
+        world_quaternion: [0.0, 0.0, 0.0, 1.0]
+      lcs_j:
+        name: "LCS_Origin"
+        position_on_part: [0.0, 0.0, 0.0]
+        world_position: [1.1, 2.0, 3.0]
+        world_quaternion: [0.0, 0.0, 0.0, 1.0]
+      relative_angle_degrees: 0.5
+      relative_quaternion: [0.0, 0.0, 0.004, 1.0]
+      inconsistent_constraints:
+        - type: "TranslationConstraintIJ directioni"
+          violation: 0.1
+  part_constraints:
+    - part: "Part1"
+      type: "EulerParameterConstraint"
+      equation_number: 7
+      violation: 0.0001
+---END:INCONSISTENT_CONSTRAINTS---
+```
+
+The `---BEGIN:` and `---END:` markers allow Python code to parse the diagnostic if needed.
+
+---
+
+## Code Flow
 
 ```
 run()
-├── protectedEqnNos.clear()
-├── while (true)
-│   ├── try
-│   │   ├── preRun() → "Assembling system"
-│   │   ├── iterate() → Newton-Raphson iterations
-│   │   │   └── solveEquations() may throw SingularMatrixError
-│   │   ├── verifyRemovedConstraintsAtConvergence()
-│   │   │   ├── If essential constraints found:
-│   │   │   │   ├── Add to protectedEqnNos
-│   │   │   │   ├── reactivateRedundantConstraints()
-│   │   │   │   ├── setqsu(qsuOld) ← CRITICAL: reset to initial positions
-│   │   │   │   └── return true → continue loop
-│   │   │   └── If all removed are truly redundant:
-│   │   │       └── return false → break loop (SUCCESS)
-│   │   └── break (SUCCESS)
+├── Clear tracking (protectedConstraints, allRemovedConstraints, etc.)
+├── OUTER try
+│   ├── while (true)
+│   │   ├── INNER try
+│   │   │   ├── preRun() → "Assembling system"
+│   │   │   ├── iterate() → Newton-Raphson iterations
+│   │   │   │   └── solveEquations() may throw SingularMatrixError
+│   │   │   ├── verifyRemovedConstraintsAtConvergence()
+│   │   │   │   ├── If essential constraints found:
+│   │   │   │   │   ├── Save bestEffortState
+│   │   │   │   │   ├── Add to protectedConstraints
+│   │   │   │   │   ├── reactivateRedundantConstraints()
+│   │   │   │   │   ├── setqsu(qsuOld) ← reset to initial positions
+│   │   │   │   │   └── return true → continue loop
+│   │   │   │   └── If all removed are truly redundant:
+│   │   │   │       └── return false → break loop (SUCCESS)
+│   │   │   └── break (SUCCESS)
+│   │   │
+│   │   └── catch SingularMatrixError
+│   │       ├── Filter out protectedConstraints
+│   │       ├── If toRemove is empty:
+│   │       │   └── throw InconsistentConstraintsError
+│   │       ├── removeRedundantConstraints(toRemove)
+│   │       ├── Track in allRemovedConstraints
+│   │       └── continue loop
 │   │
-│   └── catch SingularMatrixError
-│       ├── Filter out protectedEqnNos from redundantEqnNos
-│       ├── If toRemove is empty:
-│       │   └── throw InconsistentConstraintsError (STUCK)
-│       ├── removeRedundantConstraints(toRemove)
-│       └── continue loop
+│   └── catch InconsistentConstraintsError
+│       ├── Reactivate constraints for diagnostic
+│       ├── Reset to qsuOld for accurate residuals
+│       ├── Build YAML diagnostic
+│       ├── Restore bestEffortState (if available)
+│       ├── Call updateFromMbD()
+│       ├── Log diagnostic
+│       └── RETURN (don't throw) ← FreeCAD displays best-effort state
 ```
 
 ---
@@ -311,7 +325,7 @@ run()
 - **Expected**:
   - First iterations: removes some quaternion constraints
   - At convergence: detects these were essential (large residuals)
-  - Protects them, reactivates all, retries
+  - Saves bestEffortState, protects them, reactivates all, retries
   - Eventually converges correctly with only truly redundant constraints removed
 - **Verification**: All joints have `relative_angle_degrees ≈ 0`
 
@@ -321,55 +335,32 @@ run()
 - **Verification**: Removed constraints stay removed, assembly correct
 
 ### 3. Inconsistent Assembly
-- **Input**: Assembly with contradictory constraints (e.g., x=0 AND x=1)
+- **Input**: Assembly with contradictory constraints (e.g., parts that can't physically connect)
 - **Expected**:
   - Iteratively protects constraints
   - Eventually all singular constraints are protected
-  - Throws `InconsistentConstraintsError` with diagnostic
-- **Verification**: Error message contains joint diagnostics
-
-### 4. Regression Tests
-- Run existing test suite to ensure no regressions
-- Specifically test:
-  - `correct assembly perturbation` tests
-  - Any tests with redundant constraints
+  - Logs YAML diagnostic and returns normally
+  - FreeCAD displays best-effort state
+- **Verification**: Console shows YAML diagnostic, 3D view shows best-effort positions
 
 ---
 
-## Complexity Analysis
-
-- **Worst case**: O(N) iterations where N = number of constraints
-- **Typical case**: 1-3 iterations for most assemblies
-- **Each iteration**: Full Newton-Raphson solve
-
----
-
-## Removed Code
-
-The following code from the previous perturbation-based implementation attempt was removed:
-
-1. **`hasRetriedWithPerturbation`** - No longer using perturbation approach
-2. **Perturbation logic** - Quaternion perturbation code that tried to escape singularities
-3. **`quaternionAntiParallelThreshold`** - No longer classifying by threshold
-
-The iterative protection approach supersedes the perturbation approach entirely.
-
----
-
-## Files to Modify
+## Files Modified
 
 | File | Changes |
 |------|---------|
-| `OndselSolver/PosICNewtonRaphson.h` | Add `std::set<size_t> protectedEqnNos` member |
-| `OndselSolver/PosICNewtonRaphson.cpp` | Modify `run()`, `SingularMatrixError` catch, `verifyRemovedConstraintsAtConvergence()` |
+| `OndselSolver/PosICNewtonRaphson.h` | Added `protectedConstraints`, `allRemovedConstraints`, `bestEffortState` members |
+| `OndselSolver/PosICNewtonRaphson.cpp` | Implemented iterative protection in `run()`, `verifyRemovedConstraintsAtConvergence()`, filtering in `SingularMatrixError` catch |
+| `OndselSolver/ASMTAssembly.cpp` | Simplified `runKINEMATIC()` (removed try-catch since we don't throw) |
 
 ---
 
 ## Summary
 
-This approach:
+This implementation:
 1. **Uses existing infrastructure** (`removeRedundantConstraints`, `reactivateRedundantConstraints`)
 2. **Learns empirically** which constraints are essential (no a priori classification needed)
 3. **Guarantees termination** (finite constraints → finite iterations)
 4. **Handles all cases**: correct assemblies, anti-parallel configurations, and inconsistent assemblies
-5. **Minimal code changes** (only PosICNewtonRaphson modified)
+5. **Displays best-effort state** for inconsistent assemblies (returns normally instead of throwing)
+6. **Provides detailed diagnostics** via YAML format in console log
