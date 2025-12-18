@@ -328,7 +328,17 @@ void PosICNewtonRaphson::run()
 		// NOTE: We ignore ex.getRhsValues() - those are from Gaussian elimination, not actual residuals
 
 		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->reactivateRedundantConstraints(); });
-		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->setqsu(qsuOld); });
+
+		// Use best-effort state (saved in verifyRemovedConstraintsAtConvergence before retry)
+		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) { item->setqsu(bestEffortState); });
+
+		// Update derived quantities (rOeO, etc.) on Parts and their marker frames
+		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+			auto part = std::dynamic_pointer_cast<Part>(item);
+			if (part) {
+				part->postPosICIteration();
+			}
+		});
 
 		// Compute ACTUAL constraint residuals at current state by calling postPosICIteration()
 		// This updates each constraint's aG value to the true residual
@@ -525,23 +535,11 @@ void PosICNewtonRaphson::run()
 			}
 			oss << "---END:INCONSISTENT_CONSTRAINTS---\n";
 
-		// Restore best-effort state so FreeCAD displays useful positions
-		// (The YAML diagnostics above used qsuOld for accurate residuals)
-		if (bestEffortState) {
-			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-				item->setqsu(bestEffortState);
-			});
-			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-				auto part = std::dynamic_pointer_cast<Part>(item);
-				if (part) {
-					part->postPosICIteration();
-				}
-			});
-			system->system->externalSystem->updateFromMbD();
-		}
-
-		// Log the error (don't throw - return normally so FreeCAD displays best-effort state)
+		// Log the diagnostic YAML
 		system->logString(oss.str());
+
+		// Push best-effort state to FreeCAD (already set at start of handler)
+		system->system->externalSystem->updateFromMbD();
 		return;
 	}
 }
