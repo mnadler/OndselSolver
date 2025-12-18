@@ -400,6 +400,12 @@ void MbD::ASMTSpatialContainer::updateFromMbD()
 	oldRotMat = rotationMatrix;
 	auto rPcmO = aAOP->timesFullColumn(rPcmP);
 	auto rOPO = rOcmO->minusFullColumn(rPcmO);
+
+	// DEBUG: Print position update
+	std::cout << "MbD DEBUG: updateFromMbD " << name
+	          << " qX=[" << mbdPart->qX()->at(0) << "," << mbdPart->qX()->at(1) << "," << mbdPart->qX()->at(2) << "]"
+	          << " -> position3D=[" << rOPO->at(0) << "," << rOPO->at(1) << "," << rOPO->at(2) << "]" << std::endl;
+
 	position3D = rOPO;
 	oldPos3D = position3D;
 	auto vOPO = vOcmO->minusFullColumn(omeOPO->cross(rPcmO));

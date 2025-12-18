@@ -19,6 +19,8 @@
 #include "InconsistentConstraintsError.h"
 #include "SimulationStoppingError.h"
 #include "SystemSolver.h"
+#include "System.h"
+#include "ExternalSystem.h"
 #include "Part.h"
 #include "PartFrame.h"
 #include "Constraint.h"
@@ -106,78 +108,14 @@ void PosICNewtonRaphson::run()
 
 				// If all singular constraints are protected, we're stuck - can't converge, can't remove
 				if (toRemove->empty()) {
-					// Reactivate constraints so we can compute actual residuals
-					system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-						item->reactivateRedundantConstraints();
-					});
-
-					// Compute actual residuals for all constraints
-					system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
-						auto joint = std::dynamic_pointer_cast<Joint>(item);
-						if (joint) {
-							joint->constraintsDo([&](std::shared_ptr<Constraint> con) {
-								con->postPosICIteration();
-							});
-						}
-						auto part = std::dynamic_pointer_cast<Part>(item);
-						if (part && part->partFrame) {
-							if (part->partFrame->aGeu) part->partFrame->aGeu->postPosICIteration();
-							if (part->partFrame->aGabs) {
-								for (auto& aGab : *(part->partFrame->aGabs)) {
-									aGab->postPosICIteration();
-								}
-							}
-						}
-					});
-
-					// DEBUG: Print allRemovedConstraints info
-					std::ostringstream dbg1;
-					dbg1 << "MbD DEBUG: allRemovedConstraints.size() = " << allRemovedConstraints.size();
-					system->logString(dbg1.str());
-					for (Constraint* con : allRemovedConstraints) {
-						std::ostringstream dbg2;
-						dbg2 << "MbD DEBUG:   con iG=" << con->iG << " aG=" << con->aG;
-						system->logString(dbg2.str());
-					}
-
-					std::ostringstream dbg3;
-					dbg3 << "MbD DEBUG: protectedConstraints.size() = " << protectedConstraints.size();
-					system->logString(dbg3.str());
-					for (Constraint* con : protectedConstraints) {
-						std::ostringstream dbg4;
-						dbg4 << "MbD DEBUG:   protected con iG=" << con->iG << " aG=" << con->aG;
-						system->logString(dbg4.str());
-					}
-
-					// Build list of constraints with ACTUAL non-zero violations
+					// Build list of protected constraint equation numbers
 					auto eqnNosFullCol = std::make_shared<FullColumn<size_t>>();
-					std::set<size_t> addedEqnNos;
-					double violationTolerance = 1.0e-6;
-
-					// Check all constraints that were ever removed across all iterations
-					for (Constraint* con : allRemovedConstraints) {
-						if (std::abs(con->aG) > violationTolerance) {
-							if (addedEqnNos.find(con->iG) == addedEqnNos.end()) {
-								eqnNosFullCol->push_back(con->iG);
-								addedEqnNos.insert(con->iG);
-							}
-						}
-					}
-
-					// Check protected constraints for violations too
 					for (Constraint* con : protectedConstraints) {
-						if (std::abs(con->aG) > violationTolerance) {
-							if (addedEqnNos.find(con->iG) == addedEqnNos.end()) {
-								eqnNosFullCol->push_back(con->iG);
-								addedEqnNos.insert(con->iG);
-							}
-						}
+						eqnNosFullCol->push_back(con->iG);
 					}
 
-					std::ostringstream dbg5;
-					dbg5 << "MbD DEBUG: eqnNosFullCol.size() = " << eqnNosFullCol->size();
-					system->logString(dbg5.str());
-
+					// Outer catch will: reset to qsuOld, compute residuals, build YAML,
+					// restore bestEffortState, then rethrow
 					throw InconsistentConstraintsError(
 						"Cannot solve: all singular constraints are protected (geometrically inconsistent)",
 						eqnNosFullCol, rhsAtDetection);
@@ -561,8 +499,24 @@ void PosICNewtonRaphson::run()
 			}
 			oss << "---END:INCONSISTENT_CONSTRAINTS---\n";
 
-			// Re-throw with detailed message
-		throw InconsistentConstraintsError(oss.str());
+		// Restore best-effort state so FreeCAD displays useful positions
+		// (The YAML diagnostics above used qsuOld for accurate residuals)
+		if (bestEffortState) {
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+				item->setqsu(bestEffortState);
+			});
+			system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+				auto part = std::dynamic_pointer_cast<Part>(item);
+				if (part) {
+					part->postPosICIteration();
+				}
+			});
+			system->system->externalSystem->updateFromMbD();
+		}
+
+		// Log the error (don't throw - return normally so FreeCAD displays best-effort state)
+		system->logString(oss.str());
+		return;
 	}
 }
 
@@ -753,6 +707,13 @@ bool PosICNewtonRaphson::verifyRemovedConstraintsAtConvergence()
 			protectedMsg << " " << pair.first->iG;
 		}
 		system->logString(protectedMsg.str());
+
+		// Save current converged state as "best effort" before resetting
+		// This will be restored if we ultimately detect inconsistent constraints
+		bestEffortState = std::make_shared<FullColumn<double>>(nqsu);
+		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+			item->fillqsu(bestEffortState);
+		});
 
 		// Reactivate ALL constraints and retry with protections in place
 		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {

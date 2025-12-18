@@ -40,6 +40,8 @@ namespace MbD {
         std::set<Constraint*> protectedConstraints;
         // Track ALL constraints ever removed across all iterations for final violation reporting
         std::set<Constraint*> allRemovedConstraints;
+        // Best effort converged state - saved before retrying, restored before throwing
+        FColDsptr bestEffortState;
     };
 }
 

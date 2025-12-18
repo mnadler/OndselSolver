@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <numeric>
 #include <iomanip>
+#include <iostream>
 
 #include "ASMTAssembly.h"
 #include "CREATE.h"
@@ -1443,15 +1444,7 @@ void MbD::ASMTAssembly::runKINEMATIC()
 {
     mbdSystem = std::make_shared<System>();
     mbdSystem->externalSystem->asmtAssembly = this;
-    try {
-        mbdSystem->runKINEMATIC(mbdSystem);
-    }
-    catch (const SimulationStoppingError& ex) {
-        // Other simulation stopping errors - log and swallow
-        std::string errorMsg = "Simulation stopped: ";
-        errorMsg += ex.what();
-        mbdSystem->logString(errorMsg);
-    }
+    mbdSystem->runKINEMATIC(mbdSystem);
 }
 
 void MbD::ASMTAssembly::initprincipalMassMarker()
