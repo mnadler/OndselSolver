@@ -12,6 +12,8 @@
 #include "ASMTAssembly.h"
 #include "Constant.h"
 #include <algorithm>
+#include <cxxabi.h>
+#include <cstdlib>
 
 using namespace MbD;
 
@@ -42,8 +44,21 @@ void MbD::ASMTItem::noop()
 std::string MbD::ASMTItem::classname()
 {
 	std::string str = typeid(*this).name();
-	auto answer = str.substr(11, str.size() - 11);
-	return answer;
+	int status;
+	char* demangled = abi::__cxa_demangle(str.c_str(), nullptr, nullptr, &status);
+
+	if (status == 0 && demangled) {
+		std::string result(demangled);
+		free(demangled);
+
+		// Extract just the class name from "MbD::FixedJoint"
+		size_t pos = result.rfind("::");
+		if (pos != std::string::npos) {
+			return result.substr(pos + 2);
+		}
+		return result;
+	}
+	return str;  // Fallback if demangling fails
 }
 
 void MbD::ASMTItem::setName(const std::string& str)

@@ -130,12 +130,21 @@ JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> i
 	diag.name = this->name;
 	diag.type = this->classname();
 
+	// Helper to extract leaf name from hierarchical path (e.g., "/Assembly/Part/LCS" -> "LCS")
+	auto getLeafName = [](const std::string& fullPath) -> std::string {
+		size_t lastSlash = fullPath.rfind('/');
+		if (lastSlash != std::string::npos && lastSlash + 1 < fullPath.size()) {
+			return fullPath.substr(lastSlash + 1);
+		}
+		return fullPath;
+	};
+
 	// Get part and LCS info from frmI
 	auto markerI = frmI->getMarkerFrame();
 	auto partFrameI = markerI->getPartFrame();
 	auto partI = partFrameI->getPart();
 	diag.partIName = partI ? partI->name : "";
-	diag.lcsI.name = markerI->name;
+	diag.lcsI.name = getLeafName(markerI->name);
 	diag.lcsI.positionOnPart = { markerI->rpmp->at(0), markerI->rpmp->at(1), markerI->rpmp->at(2) };
 	diag.lcsI.worldPosition = { frmI->rOeO->at(0), frmI->rOeO->at(1), frmI->rOeO->at(2) };
 
@@ -144,7 +153,7 @@ JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> i
 	auto partFrameJ = markerJ->getPartFrame();
 	auto partJ = partFrameJ->getPart();
 	diag.partJName = partJ ? partJ->name : "";
-	diag.lcsJ.name = markerJ->name;
+	diag.lcsJ.name = getLeafName(markerJ->name);
 	diag.lcsJ.positionOnPart = { markerJ->rpmp->at(0), markerJ->rpmp->at(1), markerJ->rpmp->at(2) };
 	diag.lcsJ.worldPosition = { frmJ->rOeO->at(0), frmJ->rOeO->at(1), frmJ->rOeO->at(2) };
 
@@ -179,14 +188,19 @@ JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> i
 
 	// Get inconsistent constraints for this joint
 	// Always use con->aG - caller must call postPosICIteration() first to compute actual residuals
+	// Filter out constraints with zero violations (they were protected but are now satisfied)
+	double violationTolerance = 1.0e-6;
 	constraintsDo([&](std::shared_ptr<Constraint> con) {
 		auto it = std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), con->iG);
 		if (it != inconsistentEqnNos->end()) {
-			ConstraintDiagnostic conDiag;
-			conDiag.equationNumber = con->iG;
-			conDiag.type = con->constraintSpec();
-			conDiag.violation = con->aG;
-			diag.inconsistentConstraints.push_back(conDiag);
+			// Only include constraints with non-trivial violations
+			if (std::abs(con->aG) > violationTolerance) {
+				ConstraintDiagnostic conDiag;
+				conDiag.equationNumber = con->iG;
+				conDiag.type = con->constraintSpec();
+				conDiag.violation = con->aG;
+				diag.inconsistentConstraints.push_back(conDiag);
+			}
 		}
 		});
 

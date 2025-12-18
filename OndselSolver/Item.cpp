@@ -9,8 +9,10 @@
 //#include <windows.h>
 #include <assert.h>
 //#include <debugapi.h>
-#include <sstream> 
+#include <sstream>
 #include <chrono>
+#include <cxxabi.h>
+#include <cstdlib>
 
 #include "Item.h"
 #include "System.h"
@@ -256,8 +258,21 @@ void MbD::Item::postDynCorrectorIteration()
 std::string Item::classname()
 {
 	std::string str = typeid(*this).name();
-	auto answer = str.substr(11, str.size() - 11);
-	return answer;
+	int status;
+	char* demangled = abi::__cxa_demangle(str.c_str(), nullptr, nullptr, &status);
+
+	if (status == 0 && demangled) {
+		std::string result(demangled);
+		free(demangled);
+
+		// Extract just the class name from "MbD::FixedJoint"
+		size_t pos = result.rfind("::");
+		if (pos != std::string::npos) {
+			return result.substr(pos + 2);
+		}
+		return result;
+	}
+	return str;  // Fallback if demangling fails
 }
 
 void Item::preDynFirstStep()

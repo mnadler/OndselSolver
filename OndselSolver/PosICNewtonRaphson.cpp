@@ -244,24 +244,39 @@ void PosICNewtonRaphson::run()
 						if (joint) {
 							auto jointDiag = joint->getJointDiagnostic(violatedEqnNos);
 							if (!jointDiag.inconsistentConstraints.empty()) {
-								oss << "    - name: \"" << jointDiag.name << "\"\n";
-								oss << "      type: \"" << jointDiag.type << "\"\n";
-								oss << "      part_i: \"" << jointDiag.partIName << "\"\n";
-								oss << "      part_j: \"" << jointDiag.partJName << "\"\n";
-								oss << "      lcs_i:\n";
-								oss << "        name: \"" << jointDiag.lcsI.name << "\"\n";
-								oss << "        world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
+								// Helper to convert quaternion [x,y,z,w] to Euler angles [roll,pitch,yaw] in degrees
+								auto quatToEuler = [](const std::array<double, 4>& q) -> std::array<double, 3> {
+									double x = q[0], y = q[1], z = q[2], w = q[3];
+									double roll = std::atan2(2.0*(w*x + y*z), 1.0 - 2.0*(x*x + y*y)) * 180.0 / M_PI;
+									double sinp = 2.0*(w*y - z*x);
+									double pitch = (std::abs(sinp) >= 1.0) ? std::copysign(90.0, sinp) : std::asin(sinp) * 180.0 / M_PI;
+									double yaw = std::atan2(2.0*(w*z + x*y), 1.0 - 2.0*(y*y + z*z)) * 180.0 / M_PI;
+									return {roll, pitch, yaw};
+								};
+								auto eulerI = quatToEuler(jointDiag.lcsI.worldQuaternion);
+								auto eulerJ = quatToEuler(jointDiag.lcsJ.worldQuaternion);
+
+								oss << "    - type: \"" << jointDiag.type << "\"\n";
+								oss << "      part_i:\n";
+								oss << "        name: \"" << jointDiag.partIName << "\"\n";
+								oss << "        lcs_position_on_part: [" << jointDiag.lcsI.positionOnPart[0] << ", "
+									<< jointDiag.lcsI.positionOnPart[1] << ", " << jointDiag.lcsI.positionOnPart[2] << "]\n";
+								oss << "        lcs_world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
 									<< jointDiag.lcsI.worldPosition[1] << ", " << jointDiag.lcsI.worldPosition[2] << "]\n";
-								oss << "        world_quaternion: [" << jointDiag.lcsI.worldQuaternion[0] << ", "
+								oss << "        lcs_world_quaternion: [" << jointDiag.lcsI.worldQuaternion[0] << ", "
 									<< jointDiag.lcsI.worldQuaternion[1] << ", " << jointDiag.lcsI.worldQuaternion[2] << ", "
 									<< jointDiag.lcsI.worldQuaternion[3] << "]\n";
-								oss << "      lcs_j:\n";
-								oss << "        name: \"" << jointDiag.lcsJ.name << "\"\n";
-								oss << "        world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
+								oss << "        lcs_world_orientation: [" << eulerI[0] << ", " << eulerI[1] << ", " << eulerI[2] << "]\n";
+								oss << "      part_j:\n";
+								oss << "        name: \"" << jointDiag.partJName << "\"\n";
+								oss << "        lcs_position_on_part: [" << jointDiag.lcsJ.positionOnPart[0] << ", "
+									<< jointDiag.lcsJ.positionOnPart[1] << ", " << jointDiag.lcsJ.positionOnPart[2] << "]\n";
+								oss << "        lcs_world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
 									<< jointDiag.lcsJ.worldPosition[1] << ", " << jointDiag.lcsJ.worldPosition[2] << "]\n";
-								oss << "        world_quaternion: [" << jointDiag.lcsJ.worldQuaternion[0] << ", "
+								oss << "        lcs_world_quaternion: [" << jointDiag.lcsJ.worldQuaternion[0] << ", "
 									<< jointDiag.lcsJ.worldQuaternion[1] << ", " << jointDiag.lcsJ.worldQuaternion[2] << ", "
 									<< jointDiag.lcsJ.worldQuaternion[3] << "]\n";
+								oss << "        lcs_world_orientation: [" << eulerJ[0] << ", " << eulerJ[1] << ", " << eulerJ[2] << "]\n";
 								oss << "      relative_angle_degrees: " << jointDiag.relativeAngleDegrees << "\n";
 								oss << "      relative_quaternion: [" << jointDiag.relativeQuaternion[0] << ", "
 									<< jointDiag.relativeQuaternion[1] << ", " << jointDiag.relativeQuaternion[2] << ", "
@@ -446,29 +461,40 @@ void PosICNewtonRaphson::run()
 			oss << "  inconsistent_equation_count: " << (inconsistentEqnNos ? inconsistentEqnNos->size() : 0) << "\n";
 			oss << "  nqsu: " << nqsu << "\n";
 			oss << "  joints:\n";
+			// Helper to convert quaternion [x,y,z,w] to Euler angles [roll,pitch,yaw] in degrees
+			auto quatToEuler = [](const std::array<double, 4>& q) -> std::array<double, 3> {
+				double x = q[0], y = q[1], z = q[2], w = q[3];
+				double roll = std::atan2(2.0*(w*x + y*z), 1.0 - 2.0*(x*x + y*y)) * 180.0 / M_PI;
+				double sinp = 2.0*(w*y - z*x);
+				double pitch = (std::abs(sinp) >= 1.0) ? std::copysign(90.0, sinp) : std::asin(sinp) * 180.0 / M_PI;
+				double yaw = std::atan2(2.0*(w*z + x*y), 1.0 - 2.0*(y*y + z*z)) * 180.0 / M_PI;
+				return {roll, pitch, yaw};
+			};
 			for (const auto& jointDiag : diagnostic->joints) {
-				oss << "    - name: \"" << jointDiag.name << "\"\n";
-				oss << "      type: \"" << jointDiag.type << "\"\n";
-				oss << "      part_i: \"" << jointDiag.partIName << "\"\n";
-				oss << "      part_j: \"" << jointDiag.partJName << "\"\n";
-				oss << "      lcs_i:\n";
-				oss << "        name: \"" << jointDiag.lcsI.name << "\"\n";
-				oss << "        position_on_part: [" << jointDiag.lcsI.positionOnPart[0] << ", "
+				auto eulerI = quatToEuler(jointDiag.lcsI.worldQuaternion);
+				auto eulerJ = quatToEuler(jointDiag.lcsJ.worldQuaternion);
+
+				oss << "    - type: \"" << jointDiag.type << "\"\n";
+				oss << "      part_i:\n";
+				oss << "        name: \"" << jointDiag.partIName << "\"\n";
+				oss << "        lcs_position_on_part: [" << jointDiag.lcsI.positionOnPart[0] << ", "
 					<< jointDiag.lcsI.positionOnPart[1] << ", " << jointDiag.lcsI.positionOnPart[2] << "]\n";
-				oss << "        world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
+				oss << "        lcs_world_position: [" << jointDiag.lcsI.worldPosition[0] << ", "
 					<< jointDiag.lcsI.worldPosition[1] << ", " << jointDiag.lcsI.worldPosition[2] << "]\n";
-				oss << "        world_quaternion: [" << jointDiag.lcsI.worldQuaternion[0] << ", "
+				oss << "        lcs_world_quaternion: [" << jointDiag.lcsI.worldQuaternion[0] << ", "
 					<< jointDiag.lcsI.worldQuaternion[1] << ", " << jointDiag.lcsI.worldQuaternion[2] << ", "
 					<< jointDiag.lcsI.worldQuaternion[3] << "]\n";
-				oss << "      lcs_j:\n";
-				oss << "        name: \"" << jointDiag.lcsJ.name << "\"\n";
-				oss << "        position_on_part: [" << jointDiag.lcsJ.positionOnPart[0] << ", "
+				oss << "        lcs_world_orientation: [" << eulerI[0] << ", " << eulerI[1] << ", " << eulerI[2] << "]\n";
+				oss << "      part_j:\n";
+				oss << "        name: \"" << jointDiag.partJName << "\"\n";
+				oss << "        lcs_position_on_part: [" << jointDiag.lcsJ.positionOnPart[0] << ", "
 					<< jointDiag.lcsJ.positionOnPart[1] << ", " << jointDiag.lcsJ.positionOnPart[2] << "]\n";
-				oss << "        world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
+				oss << "        lcs_world_position: [" << jointDiag.lcsJ.worldPosition[0] << ", "
 					<< jointDiag.lcsJ.worldPosition[1] << ", " << jointDiag.lcsJ.worldPosition[2] << "]\n";
-				oss << "        world_quaternion: [" << jointDiag.lcsJ.worldQuaternion[0] << ", "
+				oss << "        lcs_world_quaternion: [" << jointDiag.lcsJ.worldQuaternion[0] << ", "
 					<< jointDiag.lcsJ.worldQuaternion[1] << ", " << jointDiag.lcsJ.worldQuaternion[2] << ", "
 					<< jointDiag.lcsJ.worldQuaternion[3] << "]\n";
+				oss << "        lcs_world_orientation: [" << eulerJ[0] << ", " << eulerJ[1] << ", " << eulerJ[2] << "]\n";
 				oss << "      relative_angle_degrees: " << jointDiag.relativeAngleDegrees << "\n";
 				oss << "      relative_quaternion: [" << jointDiag.relativeQuaternion[0] << ", "
 					<< jointDiag.relativeQuaternion[1] << ", " << jointDiag.relativeQuaternion[2] << ", "
