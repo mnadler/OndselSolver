@@ -124,7 +124,7 @@ void Joint::inconsistentConstraintsReport(std::shared_ptr<std::vector<size_t>> i
 	}
 }
 
-JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos, std::shared_ptr<std::vector<double>> rhsValues)
+JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> inconsistentEqnNos)
 {
 	JointDiagnostic diag;
 	diag.name = this->name;
@@ -178,20 +178,14 @@ JointDiagnostic Joint::getJointDiagnostic(std::shared_ptr<std::vector<size_t>> i
 	}
 
 	// Get inconsistent constraints for this joint
-	// Use RHS values from exception if available (since con->aG may have been reset)
+	// Always use con->aG - caller must call postPosICIteration() first to compute actual residuals
 	constraintsDo([&](std::shared_ptr<Constraint> con) {
 		auto it = std::find(inconsistentEqnNos->begin(), inconsistentEqnNos->end(), con->iG);
 		if (it != inconsistentEqnNos->end()) {
 			ConstraintDiagnostic conDiag;
 			conDiag.equationNumber = con->iG;
 			conDiag.type = con->constraintSpec();
-			// Use RHS value from exception if available, otherwise use current aG
-			if (rhsValues && !rhsValues->empty()) {
-				size_t index = std::distance(inconsistentEqnNos->begin(), it);
-				conDiag.violation = rhsValues->at(index);
-			} else {
-				conDiag.violation = con->aG;
-			}
+			conDiag.violation = con->aG;
 			diag.inconsistentConstraints.push_back(conDiag);
 		}
 		});

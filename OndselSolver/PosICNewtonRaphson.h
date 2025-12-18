@@ -8,14 +8,18 @@
  
 #pragma once
 
+#include <set>
 #include "AnyPosICNewtonRaphson.h"
 
 namespace MbD {
+    class Constraint;  // Forward declaration
+
     class PosICNewtonRaphson : public AnyPosICNewtonRaphson
     {
       //IC with over, fully or under constrained system
       //Perform redundant constraint removal for over constrained system
-      //pivotRowLimits
+      //Uses iterative constraint protection to distinguish truly redundant from essential constraints
+      //pivotRowLimits protectedConstraints
     public:
         PosICNewtonRaphson(){}
 
@@ -31,8 +35,11 @@ namespace MbD {
         // Track constraints removed as potentially-redundant for post-convergence verification
         std::shared_ptr<std::vector<size_t>> removedEqnNos;
         std::shared_ptr<std::vector<double>> removedRhsAtDetection;
-        // Flag to prevent infinite retry loop when perturbing for anti-parallel detection
-        bool hasRetriedWithPerturbation = false;
+        // Constraint pointers that cannot be removed as redundant (learned to be essential)
+        // Using pointers instead of equation numbers because iG changes on each retry
+        std::set<Constraint*> protectedConstraints;
+        // Track ALL constraints ever removed across all iterations for final violation reporting
+        std::set<Constraint*> allRemovedConstraints;
     };
 }
 
