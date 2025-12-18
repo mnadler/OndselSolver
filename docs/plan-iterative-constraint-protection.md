@@ -158,9 +158,10 @@ void PosICNewtonRaphson::run()
         }
     }
     catch (InconsistentConstraintsError& ex) {
-        // Build YAML diagnostic with joint/constraint details
-        // Restore bestEffortState if available
-        // Log diagnostic and RETURN (don't re-throw)
+        // Set bestEffortState (saved before retry in verifyRemovedConstraintsAtConvergence)
+        // Update Parts with postPosICIteration() to refresh marker frame positions
+        // Build YAML diagnostic with joint/constraint details at best-effort state
+        // Log diagnostic and call updateFromMbD() to push to FreeCAD
         system->logString(diagnostic);
         return;  // Let FreeCAD display best-effort state
     }
@@ -307,14 +308,17 @@ run()
 │   │       └── continue loop
 │   │
 │   └── catch InconsistentConstraintsError
-│       ├── Reactivate constraints for diagnostic
-│       ├── Reset to qsuOld for accurate residuals
-│       ├── Build YAML diagnostic
-│       ├── Restore bestEffortState (if available)
-│       ├── Call updateFromMbD()
+│       ├── Reactivate constraints
+│       ├── Set bestEffortState (saved in verifyRemovedConstraintsAtConvergence before retry)
+│       ├── Update Parts with postPosICIteration() ← updates marker frame world positions
+│       ├── Compute constraint residuals at best-effort state
+│       ├── Build YAML diagnostic (uses best-effort positions)
 │       ├── Log diagnostic
+│       ├── Call updateFromMbD() ← pushes best-effort state to FreeCAD
 │       └── RETURN (don't throw) ← FreeCAD displays best-effort state
 ```
+
+**Note:** Both the YAML diagnostic and the FreeCAD display use `bestEffortState` - the solver's best converged configuration before determining inconsistency. This allows users to see where the solver got stuck, which is more useful for debugging than showing initial positions.
 
 ---
 
