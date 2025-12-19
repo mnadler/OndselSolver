@@ -313,8 +313,25 @@ void PosICNewtonRaphson::run()
 					system->logString(oss.str());
 					system->logString("---END:CONVERGENCE_FAILURE---");
 
-					// Re-throw to propagate error
-					throw;
+					// Restore best state seen during iteration (lowest yNorm)
+					// This gives user the closest-to-solution configuration, not the diverged final state
+					if (bestEffortState) {
+						system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+							item->setqsu(bestEffortState);
+						});
+					}
+
+					// Update parts with best-effort positions for visualization
+					system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+						auto part = std::dynamic_pointer_cast<Part>(item);
+						if (part) {
+							part->postPosICIteration();
+						}
+					});
+
+					// Push best-effort state to FreeCAD
+					system->system->externalSystem->updateFromMbD();
+					return;  // Return normally - don't re-throw
 				} else {
 					// Other SimulationStoppingError - re-throw
 					throw;
@@ -599,6 +616,23 @@ void PosICNewtonRaphson::assignEquationNumbers()
 
 bool PosICNewtonRaphson::isConverged()
 {
+	// Track best state seen during iteration (lowest yNorm = best solution)
+	// This is called after every iteration, right after yNorm is updated
+	if (iterNo == 0) {
+		bestYNorm = std::numeric_limits<double>::max();
+		if (nqsu > 0) {
+			bestEffortState = std::make_shared<FullColumn<double>>(nqsu);
+		}
+	}
+
+	// Save state if this is the best we've seen (lower yNorm = better)
+	if (bestEffortState && yNorm < bestYNorm) {
+		bestYNorm = yNorm;
+		system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+			item->fillqsu(bestEffortState);
+		});
+	}
+
 	return this->isConvergedToNumericalLimit();
 }
 

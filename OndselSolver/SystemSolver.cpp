@@ -68,8 +68,24 @@ void SystemSolver::runAllIC()
 		{
 			runPosIC();
 		}
-		runVelIC();
-		runAccIC();
+
+		// Wrap VelIC and AccIC in try-catch
+		// For static assembly solving, position is what matters
+		// Velocity/acceleration are only needed for dynamic simulations
+		try {
+			runVelIC();
+		} catch (const std::exception& e) {
+			std::string msg = "VelIC convergence failed: " + std::string(e.what()) + " (continuing with position solution)";
+			system->logString(msg);
+		}
+
+		try {
+			runAccIC();
+		} catch (const std::exception& e) {
+			std::string msg = "AccIC convergence failed: " + std::string(e.what()) + " (continuing with position solution)";
+			system->logString(msg);
+		}
+
 		auto discontinuities = system->discontinuitiesAtIC();
 		if (discontinuities->size() == 0) break;
 		if (std::find(discontinuities->begin(), discontinuities->end(), "REBOUND") != discontinuities->end())

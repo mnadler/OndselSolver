@@ -9,6 +9,7 @@
 #pragma once
 
 #include <set>
+#include <limits>
 #include "AnyPosICNewtonRaphson.h"
 
 namespace MbD {
@@ -42,6 +43,8 @@ namespace MbD {
         std::set<Constraint*> allRemovedConstraints;
         // Best effort converged state - saved before retrying, restored before throwing
         FColDsptr bestEffortState;
+        // Track the best yNorm seen during iteration (lowest = best solution)
+        double bestYNorm = std::numeric_limits<double>::max();
     };
 }
 
