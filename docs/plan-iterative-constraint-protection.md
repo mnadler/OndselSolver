@@ -275,6 +275,19 @@ Constraints are geometrically inconsistent (no solution exists)
 
 The `---BEGIN:` and `---END:` markers allow Python code to parse the diagnostic if needed.
 
+### Ground Joint Filtering
+
+Ground joints (joints that fix a part to the assembly/world) are automatically filtered from the diagnostic output because:
+
+1. **Ground joints define the reference frame** - they cannot be "inconsistent" by themselves
+2. **If a ground joint appears violated**, it means OTHER joints are pulling the part away from where it was grounded - the conflict is with those other joints, not the ground joint
+
+**Detection**: Ground parts are identified by their path structure:
+- Ground/assembly: `/OndselAssembly` (no nested path)
+- Regular part: `/OndselAssembly/Part#Link` (has nested path with second `/`)
+
+The diagnostic only shows joints between actual parts, not joints connecting parts to the assembly origin.
+
 ---
 
 ## Code Flow
@@ -354,7 +367,7 @@ run()
 | File | Changes |
 |------|---------|
 | `OndselSolver/PosICNewtonRaphson.h` | Added `protectedConstraints`, `allRemovedConstraints`, `bestEffortState` members |
-| `OndselSolver/PosICNewtonRaphson.cpp` | Implemented iterative protection in `run()`, `verifyRemovedConstraintsAtConvergence()`, filtering in `SingularMatrixError` catch |
+| `OndselSolver/PosICNewtonRaphson.cpp` | Implemented iterative protection in `run()`, `verifyRemovedConstraintsAtConvergence()`, filtering in `SingularMatrixError` catch, ground joint filtering in YAML diagnostic output |
 | `OndselSolver/ASMTAssembly.cpp` | Simplified `runKINEMATIC()` (removed try-catch since we don't throw) |
 
 ---
@@ -368,3 +381,4 @@ This implementation:
 4. **Handles all cases**: correct assemblies, anti-parallel configurations, and inconsistent assemblies
 5. **Displays best-effort state** for inconsistent assemblies (returns normally instead of throwing)
 6. **Provides detailed diagnostics** via YAML format in console log
+7. **Filters ground joints** from diagnostics (they define the reference frame and can't be truly inconsistent)
