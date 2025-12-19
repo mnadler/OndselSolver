@@ -59,6 +59,7 @@ void PosICNewtonRaphson::run()
 	removedRhsAtDetection = nullptr;
 	protectedConstraints.clear();
 	allRemovedConstraints.clear();
+	correctedPartsFor180.clear();
 
 	try {  // OUTER try - catches ALL InconsistentConstraintsError for YAML processing
 		while (true) {
@@ -157,11 +158,31 @@ void PosICNewtonRaphson::run()
 						if (!markerJ || !markerJ->partFrame) return;
 
 						auto partFrame = markerJ->partFrame;
+
+						// Check if this part was already corrected (prevents infinite loop with shared parts)
+						if (correctedPartsFor180.count(partFrame) > 0) {
+							// This part was already corrected by another joint - skip
+							return;
+						}
+
 						auto qE_old = partFrame->qE;
 
-						// Compute new quaternion: qE_new = qE_old × qCorr
+						// Get marker J's local quaternion (rotation from part frame to marker frame)
+						// qEpm is the quaternion form of aApm (constant, computed from marker placement)
+						auto qMarkerJ = markerJ->qEpm;
+						std::array<double, 4> qM = {qMarkerJ->at(0), qMarkerJ->at(1), qMarkerJ->at(2), qMarkerJ->at(3)};
+						auto qM_conj = quaternionConjugate(qM);
+
+						// Conjugate correction by marker: qCorr_adj = qMarker × qCorr × conj(qMarker)
+						// This transforms the end-frame correction to a part-frame correction
+						// Math: qEndFrame' = qPart' × qMarker = qPart × qMarker × qCorr
+						//       So: qPart' = qPart × qMarker × qCorr × conj(qMarker)
+						auto qTemp = quaternionMultiply(qM, qCorr);
+						auto qCorr_adj = quaternionMultiply(qTemp, qM_conj);
+
+						// Compute new quaternion: qE_new = qE_old × qCorr_adj
 						std::array<double, 4> qOld = {qE_old->at(0), qE_old->at(1), qE_old->at(2), qE_old->at(3)};
-						auto qNew = quaternionMultiply(qOld, qCorr);
+						auto qNew = quaternionMultiply(qOld, qCorr_adj);
 
 						// Normalize for numerical stability
 						double norm = std::sqrt(qNew[0]*qNew[0] + qNew[1]*qNew[1] + qNew[2]*qNew[2] + qNew[3]*qNew[3]);
@@ -185,6 +206,9 @@ void PosICNewtonRaphson::run()
 						    << "). Applied 180° correction about " << axisName << "-axis to part '"
 						    << partFrame->part->name << "'.";
 						system->logString(msg.str());
+
+						// Mark part as corrected to prevent re-correction by other joints
+						correctedPartsFor180.insert(partFrame);
 
 						applied180Correction = true;
 					});

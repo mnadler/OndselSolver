@@ -14,6 +14,7 @@
 
 namespace MbD {
     class Constraint;  // Forward declaration
+    class PartFrame;   // Forward declaration
 
     class PosICNewtonRaphson : public AnyPosICNewtonRaphson
     {
@@ -45,6 +46,8 @@ namespace MbD {
         FColDsptr bestEffortState;
         // Track the best yNorm seen during iteration (lowest = best solution)
         double bestYNorm = std::numeric_limits<double>::max();
+        // Track parts that have been corrected for 180° singularity (prevents flip-flopping)
+        std::set<PartFrame*> correctedPartsFor180;
     };
 }
 
