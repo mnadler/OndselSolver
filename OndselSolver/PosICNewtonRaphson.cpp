@@ -29,8 +29,28 @@
 #include "GESpMatParPvPrecise.h"
 #include "GESpMatFullPvPosIC.h"
 #include "Joint.h"
+#include "EndFrameqc.h"
+#include "MarkerFrame.h"
 
 using namespace MbD;
+
+// Helper: Hamilton product of two quaternions q1 × q2
+// Quaternion format: (x, y, z, w) where w is scalar
+static std::array<double, 4> quaternionMultiply(const std::array<double, 4>& q1, const std::array<double, 4>& q2) {
+	double x1 = q1[0], y1 = q1[1], z1 = q1[2], w1 = q1[3];
+	double x2 = q2[0], y2 = q2[1], z2 = q2[2], w2 = q2[3];
+	return {
+		w1*x2 + x1*w2 + y1*z2 - z1*y2,  // x
+		w1*y2 - x1*z2 + y1*w2 + z1*x2,  // y
+		w1*z2 + x1*y2 - y1*x2 + z1*w2,  // z
+		w1*w2 - x1*x2 - y1*y2 - z1*z2   // w
+	};
+}
+
+// Helper: Conjugate of quaternion (x, y, z, w) -> (-x, -y, -z, w)
+static std::array<double, 4> quaternionConjugate(const std::array<double, 4>& q) {
+	return {-q[0], -q[1], -q[2], q[3]};
+}
 
 void PosICNewtonRaphson::run()
 {
@@ -59,6 +79,125 @@ void PosICNewtonRaphson::run()
 			catch (const SingularMatrixError& ex) {
 				auto redundantEqnNos = ex.getRedundantEqnNos();
 				auto rhsAtDetection = ex.getRhsValues();
+
+				// ============================================================
+				// FIRST: Check for 180° configuration singularity
+				// If detected, apply correction and retry instead of removing constraint
+				// ============================================================
+				bool applied180Correction = false;
+				const double SINGULARITY_W_TOLERANCE = 0.1;  // |w| < 0.1 means angle > ~168°
+				const double RESIDUAL_TOLERANCE = 0.1;       // Large residual = config singularity
+
+				for (size_t eqnNo : *redundantEqnNos) {
+					if (applied180Correction) break;
+
+					// Find the joint containing this constraint and check for 180° singularity
+					system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+						if (applied180Correction) return;
+
+						auto joint = std::dynamic_pointer_cast<Joint>(item);
+						if (!joint) return;
+
+						// Check if this joint contains the singular constraint
+						bool hasConstraint = false;
+						double constraintResidual = 0.0;
+						joint->constraintsDo([&](std::shared_ptr<Constraint> con) {
+							if (con->iG == eqnNo) {
+								hasConstraint = true;
+								// Get actual residual (aG is updated during iteration)
+								constraintResidual = std::abs(con->aG);
+							}
+						});
+
+						if (!hasConstraint) return;
+
+						// Only proceed if residual is large (configuration singularity, not redundancy)
+						if (constraintResidual < RESIDUAL_TOLERANCE) return;
+
+						// Get end frames as EndFrameqc to access world quaternions
+						auto frmIqc = std::dynamic_pointer_cast<EndFrameqc>(joint->frmI);
+						auto frmJqc = std::dynamic_pointer_cast<EndFrameqc>(joint->frmJ);
+						if (!frmIqc || !frmJqc) return;
+
+						// Get world quaternions (accounts for marker frames)
+						auto qI_ptr = frmIqc->qEO();
+						auto qJ_ptr = frmJqc->qEO();
+
+						std::array<double, 4> qI = {qI_ptr->at(0), qI_ptr->at(1), qI_ptr->at(2), qI_ptr->at(3)};
+						std::array<double, 4> qJ = {qJ_ptr->at(0), qJ_ptr->at(1), qJ_ptr->at(2), qJ_ptr->at(3)};
+
+						// Compute relative quaternion: q_rel = conj(qI) × qJ
+						auto qI_conj = quaternionConjugate(qI);
+						auto qRel = quaternionMultiply(qI_conj, qJ);
+
+						// Check if near 180° rotation (pure imaginary quaternion: |w| ≈ 0)
+						if (std::abs(qRel[3]) >= SINGULARITY_W_TOLERANCE) return;
+
+						// This is a 180° configuration singularity!
+						// Find dominant axis and construct correction quaternion
+						double absX = std::abs(qRel[0]);
+						double absY = std::abs(qRel[1]);
+						double absZ = std::abs(qRel[2]);
+
+						std::array<double, 4> qCorr = {0, 0, 0, 0};
+						std::string axisName;
+						if (absX >= absY && absX >= absZ) {
+							qCorr[0] = (qRel[0] >= 0) ? 1.0 : -1.0;
+							axisName = "x";
+						} else if (absY >= absZ) {
+							qCorr[1] = (qRel[1] >= 0) ? 1.0 : -1.0;
+							axisName = "y";
+						} else {
+							qCorr[2] = (qRel[2] >= 0) ? 1.0 : -1.0;
+							axisName = "z";
+						}
+
+						// Get part J's quaternion and apply correction
+						auto markerJ = frmJqc->getMarkerFrame();
+						if (!markerJ || !markerJ->partFrame) return;
+
+						auto partFrame = markerJ->partFrame;
+						auto qE_old = partFrame->qE;
+
+						// Compute new quaternion: qE_new = qE_old × qCorr
+						std::array<double, 4> qOld = {qE_old->at(0), qE_old->at(1), qE_old->at(2), qE_old->at(3)};
+						auto qNew = quaternionMultiply(qOld, qCorr);
+
+						// Normalize for numerical stability
+						double norm = std::sqrt(qNew[0]*qNew[0] + qNew[1]*qNew[1] + qNew[2]*qNew[2] + qNew[3]*qNew[3]);
+						if (norm > 1e-10) {
+							qNew[0] /= norm;
+							qNew[1] /= norm;
+							qNew[2] /= norm;
+							qNew[3] /= norm;
+						}
+
+						// Apply correction to part's quaternion
+						qE_old->at(0) = qNew[0];
+						qE_old->at(1) = qNew[1];
+						qE_old->at(2) = qNew[2];
+						qE_old->at(3) = qNew[3];
+
+						// Log the correction
+						std::ostringstream msg;
+						msg << "MbD: Detected 180° configuration singularity in joint '" << joint->name
+						    << "' (relative_w=" << std::abs(qRel[3]) << ", residual=" << constraintResidual
+						    << "). Applied 180° correction about " << axisName << "-axis to part '"
+						    << partFrame->part->name << "'.";
+						system->logString(msg.str());
+
+						applied180Correction = true;
+					});
+				}
+
+				if (applied180Correction) {
+					// Retry iteration from corrected state (don't reset to qsuOld)
+					continue;
+				}
+
+				// ============================================================
+				// No 180° singularity detected - proceed with normal redundancy handling
+				// ============================================================
 
 				// Helper to check if a constraint (by its current iG) is protected
 				// We need to find the constraint object for a given equation number
