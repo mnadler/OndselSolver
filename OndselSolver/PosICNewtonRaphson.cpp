@@ -6,6 +6,7 @@
  *   See LICENSE file for details about copyright.                         *
  ***************************************************************************/
 
+#include <algorithm>
 #include <assert.h>
 #include <exception>
 #include <map>
