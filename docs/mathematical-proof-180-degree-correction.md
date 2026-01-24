@@ -781,3 +781,122 @@ This approach is superior to generic singularity handling methods because it:
 5. Handles multiple singularities through natural iteration
 
 Implementation requires detecting the 180° condition (pure imaginary relative quaternion with large constraint residual) and applying the correction before the solver attempts to remove the constraint as redundant.
+
+---
+
+## 14. Implementation Notes
+
+**Status**: ✅ Implemented and working (December 2025)
+
+This section documents the actual implementation in OndselSolver, including two critical refinements discovered during testing.
+
+### 14.1 Code Location
+
+The 180° detection and correction is implemented in:
+- **`PosICNewtonRaphson.cpp`**: Main logic in `handleSingularMatrix()` (lines ~83-200)
+- **`PosICNewtonRaphson.h`**: Tracking data structures
+
+### 14.2 Marker Quaternion Conjugation
+
+**Problem discovered**: The algorithm in Section 9 computes the correction from **end-frame** quaternions (which include marker transforms), but applies it directly to the **part** quaternion. When the marker has a non-identity rotation, this produces incorrect results because quaternion multiplication does not commute.
+
+**Mathematical analysis**:
+```
+qJ_endframe = qPart × qMarker    (end frame = part × marker)
+qRel = conj(qI_endframe) × qJ_endframe
+
+We want: qJ_endframe' = qJ_endframe × qCorr
+So:      qPart' × qMarker = qPart × qMarker × qCorr
+```
+
+Solving for qPart':
+```
+qPart' = qPart × qMarker × qCorr × conj(qMarker)
+```
+
+**Implementation**: The correction must be conjugated by the marker quaternion before applying to the part:
+
+```cpp
+// Get marker J's local quaternion (qEpm = rotation from part frame to marker frame)
+auto qMarkerJ = markerJ->qEpm;
+std::array<double, 4> qM = {qMarkerJ->at(0), qMarkerJ->at(1), qMarkerJ->at(2), qMarkerJ->at(3)};
+auto qM_conj = quaternionConjugate(qM);
+
+// Conjugate correction by marker: qCorr_adj = qMarker × qCorr × conj(qMarker)
+// This transforms the end-frame correction to a part-frame correction
+auto qTemp = quaternionMultiply(qM, qCorr);
+auto qCorr_adj = quaternionMultiply(qTemp, qM_conj);
+
+// Apply adjusted correction to part
+std::array<double, 4> qOld = {qE_old->at(0), qE_old->at(1), qE_old->at(2), qE_old->at(3)};
+auto qNew = quaternionMultiply(qOld, qCorr_adj);
+```
+
+**Why this works**: When `qMarker = identity`, the conjugation is a no-op and `qCorr_adj = qCorr`. This preserves backward compatibility for simple marker configurations.
+
+### 14.3 Tracking Corrected Parts
+
+**Problem discovered**: When multiple joints share the same part (e.g., part B connects to both part A and part C), each joint may independently detect a 180° singularity and attempt to correct part B. This causes infinite flip-flopping:
+
+1. Joint A-B detects singularity, rotates B by 180°
+2. Joint B-C detects singularity, rotates B by 180° (back to original)
+3. Joint A-B detects singularity again... (infinite loop)
+
+**Solution**: Track which parts have been corrected and skip subsequent corrections for the same part.
+
+```cpp
+// In PosICNewtonRaphson.h:
+std::set<PartFrame*> correctedPartsFor180;
+
+// In handleSingularMatrix(), before applying correction:
+if (correctedPartsFor180.count(partFrame) > 0) {
+    // This part was already corrected by another joint - skip
+    continue;
+}
+
+// After applying correction:
+correctedPartsFor180.insert(partFrame);
+
+// In preRun() or run(), clear at start of each solve:
+correctedPartsFor180.clear();
+```
+
+**Why this works**: In a tree-structured assembly, once a part is correctly oriented relative to one neighbor, the other neighbors' singularities (if any) will have transformed to different axes per Section 8.4, and will be corrected on subsequent iterations. The first correction is always valid; subsequent corrections would undo it.
+
+### 14.4 Detection Thresholds
+
+The implementation uses these thresholds:
+
+| Condition | Threshold | Meaning |
+|-----------|-----------|---------|
+| `|qRel.w| < 0.1` | ~168° to 180° | Near-180° rotation detected |
+| `|residual| > 0.1` | Large constraint violation | Configuration singularity, not redundancy |
+
+These values were chosen empirically to balance:
+- **Sensitivity**: Detect 180° before Newton-Raphson fails
+- **Specificity**: Don't trigger for moderate angles where NR can converge
+
+### 14.5 Complete Algorithm Flow
+
+1. **Newton-Raphson iteration** begins normally
+2. **Singular matrix detected** during Jacobian solve
+3. **For each singular constraint**:
+   - Find the joint containing this constraint
+   - Compute relative quaternion `qRel = conj(qI) × qJ`
+   - Check if `|qRel.w| < 0.1` (180° singularity)
+   - Check if `|residual| > 0.1` (not true redundancy)
+   - Check if part not already corrected
+   - If all pass: apply 180° correction with marker conjugation
+4. **Re-assemble system** with corrected positions
+5. **Continue iteration** (do NOT reset to qsuOld)
+6. **If no corrections possible**: fall back to redundancy removal logic
+
+### 14.6 Tested Scenarios
+
+| Scenario | Result |
+|----------|--------|
+| Simple two-part, 180° anti-parallel | ✅ Converges |
+| Chain of parts, same-axis singularities | ✅ Single correction fixes all |
+| Chain of parts, different-axis singularities | ✅ Multiple corrections, all converge |
+| Multiple joints sharing one part | ✅ First correction wins, no flip-flop |
+| Marker with non-identity rotation | ✅ Marker conjugation handles correctly |

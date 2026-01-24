@@ -99,7 +99,13 @@ void SystemSolver::runAllIC()
 
 void SystemSolver::runPosIC()
 {
-	icTypeSolver = CREATE<PosICNewtonRaphson>::With();
+	// Reuse existing PosICNewtonRaphson if available.
+	// This preserves correctedPartsFor180 across retries, preventing the same part
+	// from being 180°-corrected multiple times (which causes oscillation).
+	// See docs/fix-180-degree-correction-oscillation.md for details.
+	if (!std::dynamic_pointer_cast<PosICNewtonRaphson>(icTypeSolver)) {
+		icTypeSolver = CREATE<PosICNewtonRaphson>::With();
+	}
 	icTypeSolver->setSystem(this);
 	icTypeSolver->run();
 }

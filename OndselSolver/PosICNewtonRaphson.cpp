@@ -55,12 +55,16 @@ static std::array<double, 4> quaternionConjugate(const std::array<double, 4>& q)
 
 void PosICNewtonRaphson::run()
 {
-	// Clear any previous tracking
+	// Clear per-run state
 	removedEqnNos = nullptr;
 	removedRhsAtDetection = nullptr;
 	protectedConstraints.clear();
 	allRemovedConstraints.clear();
-	correctedPartsFor180.clear();
+	// NOTE: correctedPartsFor180 is intentionally NOT cleared here.
+	// 180° corrections are geometric fixes that must persist across retry attempts.
+	// Clearing causes oscillation: correction A triggers singularity B, which
+	// triggers correction that recreates singularity A, ad infinitum.
+	// See docs/fix-180-degree-correction-oscillation.md for details.
 
 	try {  // OUTER try - catches ALL InconsistentConstraintsError for YAML processing
 		while (true) {
