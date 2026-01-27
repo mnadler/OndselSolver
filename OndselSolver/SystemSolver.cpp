@@ -59,6 +59,13 @@ void SystemSolver::initializeGlobally()
 
 void SystemSolver::runAllIC()
 {
+	// Clear 180° correction tracking for fresh solve.
+	// This must happen BEFORE the retry loop so corrections persist across
+	// needToRedoPosIC() retries (preventing oscillation), but each new solve starts fresh.
+	if (auto posIC = std::dynamic_pointer_cast<PosICNewtonRaphson>(icTypeSolver)) {
+		posIC->clearCorrectedParts();
+	}
+
 	while (true)
 	{
 		initializeLocally();
@@ -190,6 +197,13 @@ void SystemSolver::runBasicKinematic()
 
 void SystemSolver::runPreDrag()
 {
+	// Clear 180° correction tracking for fresh BFS step.
+	// Each BFS step places different parts with different constraints active,
+	// so corrections from previous steps should not block needed corrections here.
+	if (auto posIC = std::dynamic_pointer_cast<PosICNewtonRaphson>(icTypeSolver)) {
+		posIC->clearCorrectedParts();
+	}
+
 	initializeLocally();
 	initializeGlobally();
 	runPosIC();

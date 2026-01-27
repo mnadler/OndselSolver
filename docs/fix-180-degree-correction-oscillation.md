@@ -142,7 +142,28 @@ This is correct behavior.
 
 ### What About BFS Incremental Placement?
 
-FreeCAD uses BFS incremental placement, calling `runPreDrag()` for each part being placed. Each call creates a new `System` object, which resets the correction set. This is correct—each BFS step places different parts with independent geometry. The oscillation problem occurs *within* a single step's Newton-Raphson iteration, not between steps.
+FreeCAD uses BFS incremental placement, calling `runPreDrag()` for each part being placed.
+
+**CORRECTION (2026-01-24):** The original analysis incorrectly stated that each `runPreDrag()` call creates a new `System` object. This is FALSE—`runPreDrag()` operates on the existing `SystemSolver` and (after the solver reuse change) reuses the `PosICNewtonRaphson` instance.
+
+This caused a regression where corrections persisted across BFS steps, blocking necessary corrections in later steps with completely different geometric contexts.
+
+**The fix:** `runPreDrag()` now explicitly clears `correctedPartsFor180` at the start:
+
+```cpp
+void SystemSolver::runPreDrag()
+{
+    // Clear 180° correction tracking for fresh BFS step
+    if (auto posIC = std::dynamic_pointer_cast<PosICNewtonRaphson>(icTypeSolver)) {
+        posIC->clearCorrectedParts();
+    }
+    // ... rest unchanged
+}
+```
+
+Similarly, `runAllIC()` clears the set at the start (before the retry loop), ensuring:
+- Fresh context for each new solve operation
+- Corrections still persist across `needToRedoPosIC()` retries (preventing oscillation)
 
 ### Potential Counterexample (And Why It's Invalid)
 

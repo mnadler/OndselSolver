@@ -48,6 +48,10 @@ namespace MbD {
         double bestYNorm = std::numeric_limits<double>::max();
         // Track parts that have been corrected for 180° singularity (prevents flip-flopping)
         std::set<PartFrame*> correctedPartsFor180;
+
+        // Clear correction tracking - call at start of each NEW solve, not between retries
+        // See docs/fix-180-degree-correction-oscillation.md for rationale
+        void clearCorrectedParts() { correctedPartsFor180.clear(); }
     };
 }
 
