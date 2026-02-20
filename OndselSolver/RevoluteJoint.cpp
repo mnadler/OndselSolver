@@ -9,7 +9,7 @@
 #include "RevoluteJoint.h"
 #include "System.h"
 #include "AtPointConstraintIJ.h"
-#include "DirectionCosineConstraintIJ.h"
+#include "QuaternionConstraintIqcJqc.h"
 #include "CREATE.h"
 
 using namespace MbD;
@@ -27,8 +27,12 @@ void RevoluteJoint::initializeGlobally()
 	if (constraints->empty())
 	{
 		createAtPointConstraints();
-		addConstraint(CREATE<DirectionCosineConstraintIqcJqc>::ConstraintWith(frmI, frmJ, 2, 0));
-		addConstraint(CREATE<DirectionCosineConstraintIqcJqc>::ConstraintWith(frmI, frmJ, 2, 1));
+		// Use quaternion-based orientation constraints instead of direction cosine constraints.
+		// Quaternion constraints ensure Z axes are ALIGNED (same direction), not just parallel.
+		// DirectionCosine constraints allowed anti-parallel (180° flipped) Z axes.
+		// We constrain X and Y imaginary components to zero, allowing rotation around Z.
+		addConstraint(CREATE<QuaternionConstraintIqcJqc>::With(frmI, frmJ, 0));
+		addConstraint(CREATE<QuaternionConstraintIqcJqc>::With(frmI, frmJ, 1));
 		this->root()->hasChanged = true;
 	}
 	else {
