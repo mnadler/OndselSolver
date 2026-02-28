@@ -370,6 +370,34 @@ inline void EulerParameters<T>::conditionSelf()
 {
     EulerArray<T>::conditionSelf();
     this->normalizeSelf();
+
+    // FIX: Enforce canonical form (w >= 0) to eliminate quaternion double-cover ambiguity
+    // At 180° rotation, w=0, so use largest xyz component as sign reference
+    double w = this->at(3);
+    if (w < 0.0) {
+        // Flip all components: -q represents same rotation as q
+        for (size_t i = 0; i < 4; i++) {
+            this->at(i) = -this->at(i);
+        }
+    }
+    else if (std::abs(w) < 1.0e-10) {
+        // Special case: w ≈ 0 (180° rotation)
+        // Use largest xyz component as sign reference for determinism
+        double maxXyz = 0.0;
+        size_t maxIdx = 0;
+        for (size_t i = 0; i < 3; i++) {
+            double absVal = std::abs(this->at(i));
+            if (absVal > maxXyz) {
+                maxXyz = absVal;
+                maxIdx = i;
+            }
+        }
+        if (this->at(maxIdx) < 0.0) {
+            for (size_t i = 0; i < 4; i++) {
+                this->at(i) = -this->at(i);
+            }
+        }
+    }
 }
 template<>
 inline std::shared_ptr<EulerParameters<double>> EulerParameters<double>::times(double a)
@@ -445,6 +473,32 @@ inline std::shared_ptr<EulerParameters<double>> EulerParameters<double>::fromRot
         qE->at(1) = (aA->at(1)->at(2) + aA->at(2)->at(1)) / s;
         qE->at(2) = 0.25 * s;
     }
+
+    // FIX: Enforce canonical form (w >= 0)
+    double w = qE->at(3);
+    if (w < 0.0) {
+        for (size_t i = 0; i < 4; i++) {
+            qE->at(i) = -qE->at(i);
+        }
+    }
+    else if (std::abs(w) < 1.0e-10) {
+        // w ≈ 0 (180° rotation): use largest xyz as sign reference
+        double maxXyz = 0.0;
+        size_t maxIdx = 0;
+        for (size_t i = 0; i < 3; i++) {
+            double absVal = std::abs(qE->at(i));
+            if (absVal > maxXyz) {
+                maxXyz = absVal;
+                maxIdx = i;
+            }
+        }
+        if (qE->at(maxIdx) < 0.0) {
+            for (size_t i = 0; i < 4; i++) {
+                qE->at(i) = -qE->at(i);
+            }
+        }
+    }
+
     return qE;
 }
 }  // namespace MbD

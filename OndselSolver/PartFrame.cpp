@@ -313,7 +313,27 @@ void PartFrame::useEquationNumbers()
 void PartFrame::setqsu(FColDsptr col)
 {
 	qX->equalFullColumnAt(col, iqX);
+
+	// FIX: Continuity tracking - save old quaternion before updating
+	double oldQE[4];
+	for (size_t i = 0; i < 4; i++) {
+		oldQE[i] = qE->at(i);
+	}
+
 	qE->equalFullColumnAt(col, iqE);
+
+	// Check dot product between old and new quaternion
+	// If negative, they're on opposite sides of 4D hypersphere - flip to maintain continuity
+	double dotProduct = 0.0;
+	for (size_t i = 0; i < 4; i++) {
+		dotProduct += oldQE[i] * qE->at(i);
+	}
+	if (dotProduct < 0.0) {
+		for (size_t i = 0; i < 4; i++) {
+			qE->at(i) = -qE->at(i);
+		}
+	}
+
 	markerFramesDo([&](std::shared_ptr<MarkerFrame> markerFrame) { markerFrame->setqsu(col); });
 	aGeu->setqsu(col);
 	aGabsDo([&](std::shared_ptr<Constraint> con) { con->setqsu(col); });
@@ -322,7 +342,27 @@ void PartFrame::setqsu(FColDsptr col)
 void PartFrame::setqsulam(FColDsptr col)
 {
 	qX->equalFullColumnAt(col, iqX);
+
+	// FIX: Continuity tracking - save old quaternion before updating
+	double oldQE[4];
+	for (size_t i = 0; i < 4; i++) {
+		oldQE[i] = qE->at(i);
+	}
+
 	qE->equalFullColumnAt(col, iqE);
+
+	// Check dot product between old and new quaternion
+	// If negative, they're on opposite sides of 4D hypersphere - flip to maintain continuity
+	double dotProduct = 0.0;
+	for (size_t i = 0; i < 4; i++) {
+		dotProduct += oldQE[i] * qE->at(i);
+	}
+	if (dotProduct < 0.0) {
+		for (size_t i = 0; i < 4; i++) {
+			qE->at(i) = -qE->at(i);
+		}
+	}
+
 	markerFramesDo([&](std::shared_ptr<MarkerFrame> markerFrame) { markerFrame->setqsulam(col); });
 	aGeu->setqsulam(col);
 	aGabsDo([&](std::shared_ptr<Constraint> con) { con->setqsulam(col); });

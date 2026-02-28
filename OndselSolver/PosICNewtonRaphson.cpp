@@ -141,21 +141,35 @@ void PosICNewtonRaphson::run()
 
 						// This is a 180° configuration singularity!
 						// Find dominant axis and construct correction quaternion
+						// FIX: Use epsilon-based comparison with deterministic priority (Z > Y > X)
+						// to eliminate floating-point ambiguity when axes are nearly equal
 						double absX = std::abs(qRel[0]);
 						double absY = std::abs(qRel[1]);
 						double absZ = std::abs(qRel[2]);
+						const double AXIS_EPSILON = 1.0e-6;  // Tolerance for "nearly equal" axes
 
 						std::array<double, 4> qCorr = {0, 0, 0, 0};
 						std::string axisName;
-						if (absX >= absY && absX >= absZ) {
-							qCorr[0] = (qRel[0] >= 0) ? 1.0 : -1.0;
-							axisName = "x";
-						} else if (absY >= absZ) {
+
+						// Deterministic priority: Z > Y > X (when values are within epsilon)
+						// This ensures consistent axis selection across different FreeCAD versions
+						double maxVal = std::max({absX, absY, absZ});
+						bool zIsDominant = (absZ >= maxVal - AXIS_EPSILON);
+						bool yIsDominant = (absY >= maxVal - AXIS_EPSILON);
+						bool xIsDominant = (absX >= maxVal - AXIS_EPSILON);
+
+						if (zIsDominant) {
+							// Z has priority when it's within epsilon of max
+							qCorr[2] = (qRel[2] >= 0) ? 1.0 : -1.0;
+							axisName = "z";
+						} else if (yIsDominant) {
+							// Y has second priority
 							qCorr[1] = (qRel[1] >= 0) ? 1.0 : -1.0;
 							axisName = "y";
 						} else {
-							qCorr[2] = (qRel[2] >= 0) ? 1.0 : -1.0;
-							axisName = "z";
+							// X is fallback
+							qCorr[0] = (qRel[0] >= 0) ? 1.0 : -1.0;
+							axisName = "x";
 						}
 
 						// Get part J's quaternion and apply correction

@@ -30,7 +30,17 @@ void MbD::AngleZIecJec::calcPostDynCorrectorIteration()
 	auto diffOfSquares = sthez * sthez - (cthez * cthez);
 	auto sumOfSquaresSquared = sumOfSquares * sumOfSquares;
 	auto thez0to2pi = Numeric::arcTan0to2piYoverX(sthez, cthez);
-	thez = std::round((thez - thez0to2pi) / (2.0 * M_PI)) * (2.0 * M_PI) + thez0to2pi;
+
+	// FIX: Use delta-based unwrapping instead of std::round() to avoid ambiguity
+	// Calculate delta from current thez to new angle
+	auto delta = thez0to2pi - std::fmod(thez, 2.0 * M_PI);
+	if (delta < 0.0) delta += 2.0 * M_PI;  // Ensure delta is in [0, 2π)
+
+	// Unwrap: choose the path that minimizes the jump
+	if (delta > M_PI) {
+		delta -= 2.0 * M_PI;  // Take the shorter path (negative direction)
+	}
+	thez = thez + delta;
 	//std::cout << "AngleZIecJec thez = " << thez << std::endl;
 
 	cosOverSSq = cthez / sumOfSquares;
