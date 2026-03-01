@@ -125,6 +125,21 @@ void PosICNewtonRaphson::run()
 						auto frmJqc = std::dynamic_pointer_cast<EndFrameqc>(joint->frmJ);
 						if (!frmIqc || !frmJqc) return;
 
+						// Skip corrections for ground joints (where either marker is on the assembly's fixed Part)
+						// Evidence: FreeCAD's fixGroundedPart() creates a joint where markerI is on the
+						// assembly's Part (marked fixed via asFixed()). asFixed() adds 6 AbsConstraints.
+						// See: ASMTAssembly.cpp:1104, PartFrame.cpp:553-559
+						{
+							auto markerI_check = frmIqc->getMarkerFrame();
+							auto markerJ_check = frmJqc->getMarkerFrame();
+							if ((markerI_check && markerI_check->partFrame &&
+							     markerI_check->partFrame->aGabs && markerI_check->partFrame->aGabs->size() >= 6) ||
+							    (markerJ_check && markerJ_check->partFrame &&
+							     markerJ_check->partFrame->aGabs && markerJ_check->partFrame->aGabs->size() >= 6)) {
+								return;  // Don't apply singularity corrections to ground joints
+							}
+						}
+
 						// Get world quaternions (accounts for marker frames)
 						auto qI_ptr = frmIqc->qEO();
 						auto qJ_ptr = frmJqc->qEO();
@@ -239,7 +254,140 @@ void PosICNewtonRaphson::run()
 				}
 
 				// ============================================================
-				// No 180° singularity detected - proceed with normal redundancy handling
+				// SECOND: Check for IDENTITY configuration singularity
+				// When relative quaternion is near identity (w ≈ 1), quaternion
+				// constraints have ill-conditioned Jacobian entries. This is NOT
+				// structural redundancy - it's a configuration singularity.
+				// Apply small rotation perturbation to move away from identity.
+				// See docs/mathematical-proof-identity-quaternion-correction.md
+				// ============================================================
+				bool appliedIdentityCorrection = false;
+				const double IDENTITY_W_TOLERANCE = 0.99;     // |w| > 0.99 means angle < ~8°
+				const double IDENTITY_IMG_TOLERANCE = 0.15;   // imaginary components small
+
+				for (size_t eqnNo : *redundantEqnNos) {
+					if (appliedIdentityCorrection) break;
+
+					// Find the joint containing this constraint
+					system->partsJointsMotionsLimitsDo([&](std::shared_ptr<Item> item) {
+						if (appliedIdentityCorrection) return;
+
+						auto joint = std::dynamic_pointer_cast<Joint>(item);
+						if (!joint) return;
+
+						// Check if this joint contains the singular constraint
+						bool hasConstraint = false;
+						joint->constraintsDo([&](std::shared_ptr<Constraint> con) {
+							if (con->iG == eqnNo) {
+								hasConstraint = true;
+							}
+						});
+
+						if (!hasConstraint) return;
+
+						// Get end frames as EndFrameqc to access world quaternions
+						auto frmIqc = std::dynamic_pointer_cast<EndFrameqc>(joint->frmI);
+						auto frmJqc = std::dynamic_pointer_cast<EndFrameqc>(joint->frmJ);
+						if (!frmIqc || !frmJqc) return;
+
+						// Skip corrections for ground joints (where either marker is on the assembly's fixed Part)
+						// Evidence: FreeCAD's fixGroundedPart() creates a joint where markerI is on the
+						// assembly's Part (marked fixed via asFixed()). asFixed() adds 6 AbsConstraints.
+						// See: ASMTAssembly.cpp:1104, PartFrame.cpp:553-559
+						{
+							auto markerI_check = frmIqc->getMarkerFrame();
+							auto markerJ_check = frmJqc->getMarkerFrame();
+							if ((markerI_check && markerI_check->partFrame &&
+							     markerI_check->partFrame->aGabs && markerI_check->partFrame->aGabs->size() >= 6) ||
+							    (markerJ_check && markerJ_check->partFrame &&
+							     markerJ_check->partFrame->aGabs && markerJ_check->partFrame->aGabs->size() >= 6)) {
+								return;  // Don't apply singularity corrections to ground joints
+							}
+						}
+
+						// Get world quaternions (accounts for marker frames)
+						auto qI_ptr = frmIqc->qEO();
+						auto qJ_ptr = frmJqc->qEO();
+
+						std::array<double, 4> qI = {qI_ptr->at(0), qI_ptr->at(1), qI_ptr->at(2), qI_ptr->at(3)};
+						std::array<double, 4> qJ = {qJ_ptr->at(0), qJ_ptr->at(1), qJ_ptr->at(2), qJ_ptr->at(3)};
+
+						// Compute relative quaternion: q_rel = conj(qI) × qJ
+						auto qI_conj = quaternionConjugate(qI);
+						auto qRel = quaternionMultiply(qI_conj, qJ);
+
+						// Check if near IDENTITY (complement of 180° check)
+						// Identity: w ≈ 1, imaginary components ≈ 0
+						double imgMag = std::abs(qRel[0]) + std::abs(qRel[1]) + std::abs(qRel[2]);
+
+						if (std::abs(qRel[3]) <= IDENTITY_W_TOLERANCE || imgMag >= IDENTITY_IMG_TOLERANCE) {
+							return;  // Not near identity - not this type of singularity
+						}
+
+						// This is an identity configuration singularity!
+						system->logString("MbD: Identity singularity detected at joint " + joint->name +
+							" (w=" + std::to_string(qRel[3]) + ", imgMag=" + std::to_string(imgMag) + ")");
+
+						// Get part J and check if already corrected
+						auto markerJ = frmJqc->getMarkerFrame();
+						if (!markerJ || !markerJ->partFrame) return;
+
+						auto partFrame = markerJ->partFrame;
+
+						// Check if this part was already corrected for identity (prevents infinite loop)
+						if (correctedPartsForIdentity.count(partFrame) > 0) {
+							system->logString("MbD: Part already corrected for identity - skipping");
+							return;
+						}
+
+						// Apply small rotation perturbation (2° about Z-axis)
+						// This moves away from the singular identity configuration
+						const double PERTURBATION_ANGLE = 0.0349;  // 2° in radians
+						std::array<double, 4> qPert = {0, 0, std::sin(PERTURBATION_ANGLE/2), std::cos(PERTURBATION_ANGLE/2)};
+
+						// Get marker J's local quaternion (rotation from part frame to marker frame)
+						auto qMarkerJ = markerJ->qEpm;
+						std::array<double, 4> qM = {qMarkerJ->at(0), qMarkerJ->at(1), qMarkerJ->at(2), qMarkerJ->at(3)};
+						auto qM_conj = quaternionConjugate(qM);
+
+						// Conjugate correction by marker: qPert_adj = qMarker × qPert × conj(qMarker)
+						auto qTemp = quaternionMultiply(qM, qPert);
+						auto qPert_adj = quaternionMultiply(qTemp, qM_conj);
+
+						// Apply adjusted perturbation to part quaternion
+						auto qE_old = partFrame->qE;
+						std::array<double, 4> qOld = {qE_old->at(0), qE_old->at(1), qE_old->at(2), qE_old->at(3)};
+						auto qNew = quaternionMultiply(qOld, qPert_adj);
+
+						// Normalize for numerical stability
+						double norm = std::sqrt(qNew[0]*qNew[0] + qNew[1]*qNew[1] + qNew[2]*qNew[2] + qNew[3]*qNew[3]);
+						qNew[0] /= norm;
+						qNew[1] /= norm;
+						qNew[2] /= norm;
+						qNew[3] /= norm;
+
+						// Update part quaternion
+						partFrame->qE->at(0) = qNew[0];
+						partFrame->qE->at(1) = qNew[1];
+						partFrame->qE->at(2) = qNew[2];
+						partFrame->qE->at(3) = qNew[3];
+
+						system->logString("MbD: Applied identity correction (2° Z-axis perturbation) to part");
+
+						// Mark this part as corrected
+						correctedPartsForIdentity.insert(partFrame);
+
+						appliedIdentityCorrection = true;
+					});
+				}
+
+				if (appliedIdentityCorrection) {
+					// Retry iteration from perturbed state (don't reset to qsuOld)
+					continue;
+				}
+
+				// ============================================================
+				// No configuration singularity detected - proceed with normal redundancy handling
 				// ============================================================
 
 				// Helper to check if a constraint (by its current iG) is protected
